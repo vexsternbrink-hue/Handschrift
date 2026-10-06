@@ -1,0 +1,54 @@
+ANLEITUNG: HANDSCHRIFT-VORLAGE AUSFÜLLEN UND FOTOGRAFIEREN
+==========================================================
+
+1. AUSDRUCKEN
+   - Datei: templates/handschrift_vorlage.pdf
+   - Auf DIN A4 drucken, "Tatsächliche Größe" / 100 % wählen (leichtes
+     Skalieren durch "An Seite anpassen" ist aber auch kein Problem).
+   - Farbe oder Schwarz-Weiß ist egal.
+   - Seite 1 ist Pflicht. Seiten 2 und 3 sind optional: Sie enthalten
+     dieselben Zeichen noch einmal. Jede zusätzliche Seite gibt dem
+     Programm eine weitere Variante jedes Buchstabens – der Text sieht
+     dann natürlicher aus, weil nicht jedes "e" exakt gleich ist.
+
+2. AUSFÜLLEN
+   - Dunklen Stift benutzen: schwarzer oder blauer Kugelschreiber,
+     Gelstift oder Fineliner. KEIN Bleistift, kein hellblauer/roter Stift.
+   - In jedes Kästchen genau das Zeichen schreiben, das darüber steht.
+   - Schreibe so, wie du normal schreibst – nur etwas größer:
+       * Kleinbuchstaben (a, c, e, m, n, ...) zwischen den beiden
+         gepunkteten Linien,
+       * Großbuchstaben, Ziffern und Oberlängen (b, d, f, h, k, l, t)
+         über die obere gepunktete Linie hinaus,
+       * Unterlängen (g, j, p, q, y) unter die untere Linie,
+       * alles sitzt auf der UNTEREN gepunkteten Linie (Grundlinie).
+   - Nicht über den Rand des Kästchens schreiben, nichts durchstreichen.
+     Verschrieben? Lieber das Kästchen auf einer neuen Seite nochmal.
+   - Satzzeichen: Punkt, Komma usw. dort hinsetzen, wo sie in einem Wort
+     stehen würden (Punkt auf die Grundlinie, Komma leicht darunter,
+     Anführungszeichen „ unten und “ oben).
+   - Die vier schwarzen Quadrate in den Ecken nicht bemalen.
+
+3. FOTOGRAFIEREN ODER SCANNEN
+   - Scanner: am besten (300 dpi, Farbe oder Graustufen, als JPG/PNG/PDF).
+   - Handy-Foto geht auch:
+       * Blatt flach auf einen Tisch legen,
+       * gerade von oben fotografieren, das ganze Blatt muss drauf sein –
+         ALLE VIER Ecken-Quadrate müssen sichtbar sein,
+       * gleichmäßiges Licht, keine harten Schatten, kein Blitz-Spiegeln,
+       * scharf stellen.
+   - iPhone: HEIC-Fotos funktionieren nur mit "pip install pillow-heif".
+     Einfacher: Einstellungen > Kamera > Formate > "Maximale Kompatibilität".
+
+4. TRAINIEREN
+   - Foto(s) in den Ordner users/<dein-name>/input/ legen, dann:
+         python main.py train --user <dein-name>
+     oder direkt:
+         python main.py train --user <dein-name> --input foto1.jpg foto2.jpg
+   - Danach die Kontrollbilder ansehen:
+       * users/<name>/handwriting/glyph_uebersicht.png  – alle gelernten Zeichen
+       * users/<name>/handwriting/debug/*.jpg            – grün = erkannt,
+                                                           rot = leer
+   - Sieht ein Zeichen falsch aus? Die Seite neu ausfüllen/fotografieren und
+     nochmal trainieren. Mit --append werden neue Fotos ZUSÄTZLICH zu den
+     bisherigen Varianten gelernt.

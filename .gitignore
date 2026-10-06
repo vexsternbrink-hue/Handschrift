@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+logs/*
+!logs/.gitkeep
+# Persönliche Handschrift-Daten bleiben lokal
+users/*
+!users/README.md

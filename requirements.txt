@@ -1,0 +1,10 @@
+# Python >= 3.9
+numpy>=1.23
+opencv-python-headless>=4.7   # Bildverarbeitung + ArUco-Marker
+Pillow>=10.1
+reportlab>=4.0                # PDF-Erzeugung
+fonttools>=4.40               # TTF-Export
+pypdfium2>=4.20               # PDF-Scans einlesen, PNG-Vorschauen
+pytest>=7                     # automatische Tests
+# optional für iPhone-Fotos im HEIC-Format:
+# pillow-heif>=0.13
