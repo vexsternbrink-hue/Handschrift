@@ -11,6 +11,24 @@ Mehrere Nutzer (du und deine Freunde) haben jeweils ihr eigenes Profil.
 > Die Beispiele oben nutzen eine *simulierte* Handschrift (Demo-Nutzer). Mit deinem
 > eigenen Foto sieht das Ergebnis aus wie deine Schrift.
 
+## 📱 Web-App fürs iPad (ohne Installation)
+
+Es gibt dieselbe Funktion auch als **Webseite, die komplett im Browser läuft** – ideal für iPad,
+iPhone oder fremde Rechner: <https://claude.ai/artifact/FtHXHoX3xxmtMXSQkGWDHS>
+
+* **Handschrift lernen:** Vorlage als PDF speichern und drucken (AirPrint), ausfüllen, mit dem
+  iPad fotografieren, Foto hochladen – die Zeichen werden direkt auf dem Gerät erkannt.
+* **Schreiben:** Text eintippen, Papier/Tinte/Größe wählen, Vorschau ansehen, „PDF speichern“.
+* **Profile:** Jede Person legt ihr eigenes Profil an. Profile lassen sich als `.json`
+  exportieren und wieder importieren (Sicherung, Weitergabe an andere Geräte).
+
+Die Web-App nutzt dieselbe Vorlage wie die Python-App. Der Code liegt in `web/`:
+`core.js` (Erkennung + Layout, ohne Browser-Abhängigkeiten), `app.html` (Oberfläche),
+`build.py` (baut daraus die eigenständige `web/index.html`). Die gebaute `index.html` funktioniert
+auch außerhalb von claude.ai, z. B. über GitHub Pages – Profile liegen dann im Browser des Geräts.
+Tests: `node web/tests/core.test.js <fixtures>` (Fixtures mit `python web/tests/make_fixtures.py <dir>`)
+und `web/tests/e2e.test.js` (Playwright/Chromium).
+
 ---
 
 ## Inhalt

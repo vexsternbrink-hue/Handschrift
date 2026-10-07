@@ -1,0 +1,888 @@
+<title>Handschrift-Generator</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=Atkinson+Hyperlegible:wght@400;700&display=swap">
+<style>
+/* Layout: an exercise-book desk. Controls on the left, the written A4 sheet on the right; stacks on narrow screens. */
+:root {
+  --bg: #e9edf3;          /* desk, blue-grey */
+  --surface: #ffffff;
+  --surface-2: #f4f6fa;
+  --fg: #1c2230;
+  --muted: #5a6476;
+  --line: #cfd7e4;
+  --accent: #2346b8;      /* royal-blue ink */
+  --accent-fg: #ffffff;
+  --accent-soft: #e3e9fb;
+  --margin: #cf4b4b;      /* red margin rule */
+  --ok: #24764a;
+  --warn: #a35a00;
+  --sheet: #ffffff;
+  --shadow: 0 1px 2px rgba(20, 30, 60, .08), 0 8px 24px rgba(20, 30, 60, .08);
+  --font-display: "Bricolage Grotesque", "Avenir Next", "Segoe UI", system-ui, sans-serif;
+  --font-body: "Atkinson Hyperlegible", "Helvetica Neue", Arial, system-ui, sans-serif;
+  --radius: 10px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #11151d; --surface: #1a202b; --surface-2: #222a37; --fg: #e5e9f1; --muted: #9ba5b8; --line: #2f394a;
+    --accent: #8da7ff; --accent-fg: #0e1426; --accent-soft: #263257; --margin: #ef7b7b; --ok: #6fcf97; --warn: #f0b35a;
+    --sheet: #fbfbf8; --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 8px 24px rgba(0, 0, 0, .35); color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #11151d; --surface: #1a202b; --surface-2: #222a37; --fg: #e5e9f1; --muted: #9ba5b8; --line: #2f394a;
+  --accent: #8da7ff; --accent-fg: #0e1426; --accent-soft: #263257; --margin: #ef7b7b; --ok: #6fcf97; --warn: #f0b35a;
+  --sheet: #fbfbf8; --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 8px 24px rgba(0, 0, 0, .35); color-scheme: dark;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { background: var(--bg); color: var(--fg); font-family: var(--font-body); font-size: 16px; line-height: 1.5; }
+.wrap { max-width: 1240px; margin: 0 auto; padding-inline: 16px; padding-block: 0 48px; }
+h1, h2, h3 { font-family: var(--font-display); line-height: 1.15; text-wrap: balance; margin: 0; }
+h1 { font-size: 1.45rem; letter-spacing: -.01em; }
+h2 { font-size: 1.2rem; }
+h3 { font-size: 1rem; }
+p { margin: 0; }
+button, select, input, textarea { font: inherit; color: inherit; }
+:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+
+/* header */
+.top { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px; padding-block: 18px 14px; }
+.brand { display: flex; align-items: baseline; gap: 10px; margin-right: auto; }
+.brand small { color: var(--muted); font-size: .85rem; }
+.tabs { display: flex; gap: 4px; background: var(--surface); padding: 4px; border-radius: 999px; box-shadow: var(--shadow); }
+.tab { border: 0; background: transparent; padding: 8px 16px; border-radius: 999px; cursor: pointer; font-weight: 700; color: var(--muted); }
+.tab[aria-selected="true"] { background: var(--accent); color: var(--accent-fg); }
+.who { display: flex; align-items: center; gap: 8px; }
+.who label { color: var(--muted); font-size: .9rem; }
+
+/* generic */
+.panel { background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow); padding: 18px; display: grid; gap: 14px; min-width: 0; }
+.field { display: grid; gap: 6px; }
+.field > label, .label { font-size: .78rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+select, input[type="text"], textarea { background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px; padding: 9px 11px; width: 100%; }
+textarea { min-height: 220px; resize: vertical; line-height: 1.45; }
+.btn { border: 1px solid var(--line); background: var(--surface); padding: 10px 16px; border-radius: 8px; cursor: pointer; font-weight: 700; display: inline-flex; align-items: center; gap: 8px; }
+.btn:hover { border-color: var(--accent); }
+.btn.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+.btn.danger { color: var(--margin); }
+.btn[disabled] { opacity: .5; cursor: not-allowed; }
+.row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.hint { color: var(--muted); font-size: .9rem; }
+.seg { display: inline-flex; background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px; padding: 3px; gap: 2px; flex-wrap: wrap; }
+.seg button { border: 0; background: transparent; padding: 6px 12px; border-radius: 6px; cursor: pointer; }
+.seg button[aria-pressed="true"] { background: var(--surface); box-shadow: 0 1px 3px rgba(0,0,0,.15); font-weight: 700; }
+.inks { display: flex; gap: 8px; flex-wrap: wrap; }
+.ink { width: 34px; height: 34px; border-radius: 50%; border: 3px solid var(--surface); box-shadow: 0 0 0 1px var(--line); cursor: pointer; }
+.ink[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--accent); }
+input[type="range"] { width: 100%; accent-color: var(--accent); }
+.range-row { display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: center; }
+.range-row output { font-variant-numeric: tabular-nums; color: var(--muted); min-width: 3.5em; text-align: right; }
+
+/* write view */
+.write { display: grid; grid-template-columns: minmax(0, 380px) minmax(0, 1fr); gap: 20px; align-items: start; }
+.sheets { display: grid; gap: 12px; min-width: 0; }
+.stack { display: grid; gap: 18px; justify-items: center; width: 100%; min-width: 0; }
+.sheet { width: 100%; max-width: 760px; aspect-ratio: 210 / 297; background: var(--sheet); box-shadow: var(--shadow); border-radius: 2px; }
+.sheet canvas { width: 100%; height: 100%; display: block; }
+.sheet-meta { color: var(--muted); font-size: .9rem; font-variant-numeric: tabular-nums; text-align: center; }
+.badge { display: inline-block; font-size: .75rem; font-weight: 700; padding: 2px 8px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); }
+.badge.local { background: var(--surface-2); color: var(--warn); }
+.missing { color: var(--warn); font-size: .9rem; }
+@media (max-width: 720px) { .write { grid-template-columns: minmax(0, 1fr); } }
+@media (min-width: 721px) and (max-width: 1000px) { .write { grid-template-columns: minmax(0, 320px) minmax(0, 1fr); } }
+
+/* learn view */
+.steps { display: grid; gap: 16px; }
+.step { display: grid; grid-template-columns: 40px minmax(0, 1fr); gap: 14px; }
+.step .num { width: 34px; height: 34px; border-radius: 50%; background: var(--accent-soft); color: var(--accent); display: grid; place-items: center; font-family: var(--font-display); font-weight: 700; }
+.step .body { display: grid; gap: 10px; min-width: 0; }
+.checklist { margin: 0; padding-left: 1.2em; display: grid; gap: 4px; }
+.drop { border: 2px dashed var(--line); border-radius: var(--radius); padding: 22px; text-align: center; display: grid; gap: 8px; justify-items: center; background: var(--surface-2); }
+.drop.over { border-color: var(--accent); }
+.results { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+.result { background: var(--surface-2); border-radius: 8px; padding: 10px; display: grid; gap: 6px; min-width: 0; }
+.result canvas { width: 100%; height: auto; border-radius: 4px; background: #fff; }
+.status-ok { color: var(--ok); font-weight: 700; }
+.status-err { color: var(--margin); font-weight: 700; }
+.overview { width: 100%; height: auto; background: #fff; border-radius: 6px; }
+
+/* profiles view */
+.plist { display: grid; gap: 10px; }
+.pitem { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px 16px; align-items: center; background: var(--surface-2); border-radius: 8px; padding: 12px 14px; }
+.pitem .meta { color: var(--muted); font-size: .9rem; font-variant-numeric: tabular-nums; }
+.confirm { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; color: var(--margin); font-weight: 700; }
+
+.toast { position: fixed; left: 50%; bottom: calc(18px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); background: var(--fg); color: var(--bg); padding: 10px 16px; border-radius: 8px; max-width: calc(100% - 32px); box-shadow: var(--shadow); z-index: 10; }
+@media (prefers-reduced-motion: no-preference) { .toast { transition: opacity .2s; } }
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <div class="brand"><h1>Handschrift-Generator</h1><small>Deine Schrift auf liniertem A4</small></div>
+    <div class="who">
+      <label for="profile-select">Handschrift</label>
+      <select id="profile-select"></select>
+    </div>
+    <nav class="tabs" role="tablist" aria-label="Bereiche">
+      <button class="tab" role="tab" id="tab-write" aria-controls="view-write" aria-selected="true">Schreiben</button>
+      <button class="tab" role="tab" id="tab-learn" aria-controls="view-learn" aria-selected="false">Handschrift lernen</button>
+      <button class="tab" role="tab" id="tab-profiles" aria-controls="view-profiles" aria-selected="false">Profile</button>
+    </nav>
+  </header>
+
+  <!-- ============================ WRITE ============================ -->
+  <section id="view-write" role="tabpanel" aria-labelledby="tab-write">
+    <div class="write">
+      <div class="panel">
+        <div class="field">
+          <label for="text">Text</label>
+          <textarea id="text" spellcheck="false"></textarea>
+        </div>
+        <div class="field">
+          <span class="label">Papier</span>
+          <div class="seg" id="paper-seg">
+            <button type="button" data-v="liniert" aria-pressed="true">Liniert</button>
+            <button type="button" data-v="kariert" aria-pressed="false">Kariert</button>
+            <button type="button" data-v="blanko" aria-pressed="false">Blanko</button>
+          </div>
+        </div>
+        <div class="field">
+          <span class="label">Tinte</span>
+          <div class="inks" id="inks"></div>
+        </div>
+        <div class="field">
+          <label for="size">Schriftgröße</label>
+          <div class="range-row"><input type="range" id="size" min="0.6" max="1.6" step="0.05" value="1"><output id="size-out">100 %</output></div>
+        </div>
+        <div class="field">
+          <label for="jitter">Natürlichkeit</label>
+          <div class="range-row"><input type="range" id="jitter" min="0" max="2" step="0.1" value="1"><output id="jitter-out">normal</output></div>
+        </div>
+        <div class="row">
+          <button class="btn primary" id="save-pdf" type="button">PDF speichern</button>
+          <button class="btn" id="reroll" type="button">Neu schreiben</button>
+        </div>
+        <p class="hint" id="pdf-hint">„Neu schreiben“ wählt andere Buchstaben-Varianten und Schwankungen. Das PDF entspricht genau der Vorschau.</p>
+      </div>
+      <div class="sheets">
+        <div class="sheet-meta" id="sheet-meta"></div>
+        <div id="sheet-list" class="stack"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================ LEARN ============================ -->
+  <section id="view-learn" role="tabpanel" aria-labelledby="tab-learn" hidden>
+    <div class="panel steps">
+      <div class="step">
+        <div class="num">1</div>
+        <div class="body">
+          <h2>Vorlage drucken und ausfüllen</h2>
+          <div class="row"><button class="btn" id="save-template" type="button">Vorlage als PDF speichern</button><span class="hint">A4, 3 Seiten. Seite 1 reicht, Seite 2–3 machen die Schrift natürlicher.</span></div>
+          <ul class="checklist">
+            <li>Mit dunklem Stift (schwarzer oder blauer Kuli, Fineliner) jedes Zeichen in sein Kästchen schreiben. Kein Bleistift.</li>
+            <li>Kleinbuchstaben zwischen die gepunkteten Linien, alles sitzt auf der unteren Linie. Großbuchstaben darüber, g, j, p, q, y hängen darunter.</li>
+            <li>Nicht über den Kästchenrand schreiben, die schwarzen Ecken-Quadrate frei lassen.</li>
+          </ul>
+        </div>
+      </div>
+      <div class="step">
+        <div class="num">2</div>
+        <div class="body">
+          <h2>Wessen Handschrift?</h2>
+          <div class="seg" id="target-seg">
+            <button type="button" data-v="new" aria-pressed="true">Neues Profil</button>
+            <button type="button" data-v="add" aria-pressed="false">Varianten zu bestehendem Profil</button>
+          </div>
+          <div class="field" id="new-name-field">
+            <label for="new-name">Name</label>
+            <input type="text" id="new-name" placeholder="z. B. Vincent" maxlength="40" autocomplete="off">
+          </div>
+          <div class="field" id="add-target-field" hidden>
+            <label for="add-target">Profil</label>
+            <select id="add-target"></select>
+          </div>
+        </div>
+      </div>
+      <div class="step">
+        <div class="num">3</div>
+        <div class="body">
+          <h2>Foto der ausgefüllten Seite</h2>
+          <p class="hint">Blatt flach hinlegen, gerade von oben fotografieren, alle vier Ecken-Quadrate müssen drauf sein. Mehrere Seiten auf einmal sind möglich.</p>
+          <div class="drop" id="drop">
+            <input type="file" id="photos" accept="image/*" multiple hidden>
+            <button class="btn primary" id="pick-photos" type="button">Foto aufnehmen oder auswählen</button>
+            <span class="hint">oder Bilder hierher ziehen</span>
+          </div>
+          <div class="results" id="results"></div>
+        </div>
+      </div>
+      <div class="step" id="step-result" hidden>
+        <div class="num">4</div>
+        <div class="body">
+          <h2>Ergebnis prüfen und speichern</h2>
+          <p id="learn-summary"></p>
+          <canvas class="overview" id="overview" width="1200" height="400" aria-label="Alle erkannten Zeichen"></canvas>
+          <div class="row"><button class="btn primary" id="save-profile" type="button">Handschrift speichern</button><span class="hint" id="save-hint"></span></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================ PROFILES ============================ -->
+  <section id="view-profiles" role="tabpanel" aria-labelledby="tab-profiles" hidden>
+    <div class="panel">
+      <div class="row" style="justify-content: space-between">
+        <h2>Gespeicherte Handschriften</h2>
+        <div class="row">
+          <input type="file" id="import-file" accept=".json,application/json" hidden>
+          <button class="btn" id="import" type="button">Profil importieren</button>
+        </div>
+      </div>
+      <p class="hint" id="storage-hint"></p>
+      <div class="plist" id="plist"></div>
+    </div>
+  </section>
+</div>
+<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script>
+if (!window.jspdf) {
+  document.write('<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"><\/script>');
+}
+</script>
+<script>
+/*__CORE__*/
+</script>
+<script type="application/json" id="demo-profile">/*__DEMO_PROFILE__*/</script>
+<script>
+const TEMPLATE_PDF_B64 = "/*__TEMPLATE_PDF__*/";
+</script>
+<script>
+"use strict";
+(function () {
+  const $ = (id) => document.getElementById(id);
+  const tick = () => new Promise((r) => setTimeout(r, 20));
+  const INKS = {
+    blau: [26, 51, 148], koenigsblau: [31, 64, 179], dunkelblau: [20, 31, 97], schwarz: [18, 18, 23], rot: [191, 26, 31], gruen: [13, 107, 51],
+  };
+  const INK_NAMES = { blau: "Blau", koenigsblau: "Königsblau", dunkelblau: "Dunkelblau", schwarz: "Schwarz", rot: "Rot", gruen: "Grün" };
+  const SAMPLE = "Liebe Oma,\n\nvielen Dank für das schöne Päckchen! Ich habe mich riesig gefreut. Die Kekse waren köstlich – leider sind sie schon alle weg ;-)\n\nAm Samstag, den 14.11., komme ich um 15:30 Uhr vorbei. Soll ich etwas mitbringen? Mama meint: „Bring Blumen mit!“\n\nViele liebe Grüße\ndeine Lena";
+
+  const state = {
+    profiles: new Map(), // id -> {id, name, source, meta}
+    loaded: new Map(),   // id -> runtime profile (with glyph alpha + outlines)
+    activeId: "demo",
+    paper: "liniert", ink: "blau", size: 1, jitter: 1, seed: 1,
+    learn: { target: "new", pages: [], profile: null },
+  };
+
+  // ------------------------------------------------------------ helpers
+  let toastTimer = null;
+  function toast(msg) {
+    const t = $("toast");
+    t.textContent = msg; t.hidden = false;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { t.hidden = true; }, 4200);
+  }
+  function prefs(save) {
+    try {
+      if (save) localStorage.setItem("hs-prefs", JSON.stringify({ paper: state.paper, ink: state.ink, size: state.size, jitter: state.jitter, activeId: state.activeId, text: $("text").value }));
+      else return JSON.parse(localStorage.getItem("hs-prefs") || "null");
+    } catch (e) { return null; }
+  }
+  function slug(name) {
+    const base = name.toLowerCase().normalize("NFKD").replace(/[̀-ͯ]/g, "").replace(/ß/g, "ss").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 24) || "profil";
+    return base + "-" + Math.random().toString(36).slice(2, 7);
+  }
+  function b64ToBytes(b64) { const s = atob(b64), out = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) out[i] = s.charCodeAt(i); return out; }
+
+  async function offerFile(filename, blob) {
+    if (window.claude && typeof window.claude.use === "function") {
+      const dl = await window.claude.use("downloads");
+      if (!dl) { toast("Dateien speichern ist in dieser Ansicht nicht möglich."); return; }
+      try {
+        const res = await dl.save({ filename, data: blob });
+        if (res && res.status === "saved") toast("Gespeichert: " + filename);
+      } catch (e) {
+        if (e && e.code === "declined") return;
+        if (e && e.code === "rate_limited") toast("Es ist schon ein Speichern-Dialog offen.");
+        else toast("Speichern hat nicht geklappt (" + ((e && e.code) || "Fehler") + ").");
+      }
+      return;
+    }
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob); a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  }
+
+  // ------------------------------------------------------- glyph images
+  function alphaToPng(g) {
+    const c = document.createElement("canvas");
+    c.width = g.width; c.height = g.height;
+    const ctx = c.getContext("2d"), im = ctx.createImageData(g.width, g.height);
+    for (let i = 0; i < g.alpha.length; i++) { const v = g.alpha[i]; im.data[4 * i] = v; im.data[4 * i + 1] = v; im.data[4 * i + 2] = v; im.data[4 * i + 3] = 255; }
+    ctx.putImageData(im, 0, 0);
+    return c.toDataURL("image/png").split(",")[1];
+  }
+  function pngToAlpha(b64, w, h) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        const c = document.createElement("canvas"); c.width = w; c.height = h;
+        const ctx = c.getContext("2d"); ctx.drawImage(img, 0, 0, w, h);
+        const d = ctx.getImageData(0, 0, w, h).data, a = new Uint8Array(w * h);
+        for (let i = 0; i < a.length; i++) a[i] = d[4 * i];
+        resolve(a);
+      };
+      img.onerror = () => reject(new Error("Glyph-Bild defekt"));
+      img.src = "data:image/png;base64," + b64;
+    });
+  }
+
+  /** stored profile JSON -> runtime profile */
+  async function hydrate(id, stored) {
+    const glyphs = {};
+    const jobs = [];
+    for (const [ch, list] of Object.entries(stored.glyphs)) {
+      glyphs[ch] = list.map((s, i) => {
+        const g = { char: ch, variant: i, width: s.w, height: s.h, baseline: s.b, templateBaseline: s.tb ?? s.b, inkLeft: s.il, inkRight: s.ir, inkTop: s.it, inkBottom: s.ib, png: s.png };
+        jobs.push(pngToAlpha(s.png, s.w, s.h).then((a) => { g.alpha = a; HS.glyphProfiles(g); }));
+        return g;
+      });
+    }
+    await Promise.all(jobs);
+    return { id, name: stored.name, pxPerMm: stored.pxPerMm, xHeightPx: stored.xHeightPx, capHeightPx: stored.capHeightPx, missing: stored.missing || [], glyphs, tinted: {} };
+  }
+
+  /** runtime/built profile -> stored JSON */
+  function dehydrate(p) {
+    const glyphs = {};
+    for (const [ch, list] of Object.entries(p.glyphs)) {
+      glyphs[ch] = list.map((g) => ({ w: g.width, h: g.height, b: +g.baseline.toFixed(2), tb: +g.templateBaseline.toFixed(2), il: g.inkLeft, ir: g.inkRight, it: g.inkTop, ib: g.inkBottom, png: g.png || (g.png = alphaToPng(g)) }));
+    }
+    return { v: 1, name: p.name, created: p.created || new Date().toISOString(), pxPerMm: p.pxPerMm, xHeightPx: p.xHeightPx, capHeightPx: p.capHeightPx, missing: p.missing || [], glyphs };
+  }
+
+  function tinted(p, g, ink) {
+    const key = g.char + "|" + g.variant + "|" + ink;
+    let t = p.tinted[key];
+    if (!t) {
+      const c = document.createElement("canvas"); c.width = g.width; c.height = g.height;
+      const ctx = c.getContext("2d"), im = ctx.createImageData(g.width, g.height), [r, gg, b] = INKS[ink];
+      for (let i = 0; i < g.alpha.length; i++) { im.data[4 * i] = r; im.data[4 * i + 1] = gg; im.data[4 * i + 2] = b; im.data[4 * i + 3] = g.alpha[i]; }
+      ctx.putImageData(im, 0, 0);
+      t = p.tinted[key] = { canvas: c, url: null, alias: p.id + "-" + key };
+    }
+    return t;
+  }
+
+  // ------------------------------------------------------------ storage
+  const Store = {
+    db: null,
+    async init() {
+      if (window.claude && typeof window.claude.use === "function") {
+        try { this.db = await window.claude.use("db"); } catch (e) { this.db = null; }
+      }
+      if (this.db) {
+        this.db.collection("profiles").onSnapshot((snap) => {
+          for (const [id, p] of [...state.profiles]) if (p.source === "shared") state.profiles.delete(id);
+          for (const d of snap.docs) { const m = d.data(); if (m && m.name) state.profiles.set(d.id, { id: d.id, name: m.name, source: "shared", meta: m }); }
+          renderProfiles();
+        }, () => {});
+      }
+      await this.loadLocalList();
+      renderProfiles();
+    },
+    idb() {
+      return new Promise((resolve, reject) => {
+        try {
+          const req = indexedDB.open("handschrift", 1);
+          req.onupgradeneeded = () => req.result.createObjectStore("profiles", { keyPath: "id" });
+          req.onsuccess = () => resolve(req.result);
+          req.onerror = () => reject(req.error);
+        } catch (e) { reject(e); }
+      });
+    },
+    async idbDo(mode, fn) {
+      const db = await this.idb();
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction("profiles", mode), st = tx.objectStore("profiles"), req = fn(st);
+        tx.oncomplete = () => resolve(req && req.result);
+        tx.onerror = () => reject(tx.error);
+      });
+    },
+    async loadLocalList() {
+      try {
+        const all = await this.idbDo("readonly", (st) => st.getAll());
+        for (const rec of all || []) state.profiles.set(rec.id, { id: rec.id, name: rec.data.name, source: "local", meta: summary(rec.data) });
+      } catch (e) { /* no local storage in this view */ }
+    },
+    async load(entry) {
+      if (entry.source === "local") {
+        const rec = await this.idbDo("readonly", (st) => st.get(entry.id));
+        return rec.data;
+      }
+      const meta = (await this.db.doc("profiles/" + entry.id).get()).data();
+      const glyphs = {};
+      for (let i = 0; i < meta.chunks; i++) {
+        const c = (await this.db.doc("profiles/" + entry.id + "/chunks/" + i).get()).data();
+        if (!c) throw new Error("Profil unvollständig gespeichert");
+        Object.assign(glyphs, c.glyphs);
+      }
+      return Object.assign({}, meta, { glyphs });
+    },
+    /** returns "shared" or "local" */
+    async save(id, stored) {
+      if (this.db) {
+        try {
+          const chunks = [];
+          let cur = {}, size = 0;
+          for (const [ch, list] of Object.entries(stored.glyphs)) {
+            const s = JSON.stringify(list).length;
+            if (size + s > 180000 && size > 0) { chunks.push(cur); cur = {}; size = 0; }
+            cur[ch] = list; size += s;
+          }
+          chunks.push(cur);
+          for (let i = 0; i < chunks.length; i++) await this.db.doc("profiles/" + id + "/chunks/" + i).set({ glyphs: chunks[i] });
+          const meta = summary(stored);
+          meta.chunks = chunks.length;
+          await this.db.doc("profiles/" + id).set(meta);
+          return "shared";
+        } catch (e) {
+          if (e && e.code === "quota_exceeded") throw new Error("Der gemeinsame Speicher ist voll. Lösche ein altes Profil.");
+          /* no write access -> keep it on this device */
+        }
+      }
+      await this.idbDo("readwrite", (st) => st.put({ id, data: stored }));
+      state.profiles.set(id, { id, name: stored.name, source: "local", meta: summary(stored) });
+      return "local";
+    },
+    async remove(entry) {
+      if (entry.source === "local") { await this.idbDo("readwrite", (st) => st.delete(entry.id)); state.profiles.delete(entry.id); return; }
+      const meta = (await this.db.doc("profiles/" + entry.id).get()).data() || {};
+      await this.db.doc("profiles/" + entry.id).delete();
+      for (let i = 0; i < (meta.chunks || 0); i++) await this.db.doc("profiles/" + entry.id + "/chunks/" + i).delete();
+    },
+  };
+  function summary(stored) {
+    const lists = Object.values(stored.glyphs);
+    return {
+      name: stored.name, created: stored.created, updated: new Date().toISOString(), pxPerMm: stored.pxPerMm,
+      xHeightPx: stored.xHeightPx, capHeightPx: stored.capHeightPx, missing: stored.missing || [],
+      chars: lists.length, variants: lists.reduce((a, l) => a + l.length, 0),
+    };
+  }
+
+  /** The chosen profile, or the demo while the chosen one isn't (yet) listed. */
+  function activeId() { return state.profiles.has(state.activeId) ? state.activeId : "demo"; }
+
+  async function getProfile(id) {
+    if (state.loaded.has(id)) return state.loaded.get(id);
+    const entry = state.profiles.get(id);
+    if (!entry) return null;
+    const stored = entry.source === "demo" ? entry.stored : await Store.load(entry);
+    const p = await hydrate(id, stored);
+    p.source = entry.source;
+    state.loaded.set(id, p);
+    return p;
+  }
+
+  // ---------------------------------------------------------- rendering
+  let renderToken = 0, lastLayout = null;
+  function scheduleRender() { clearTimeout(scheduleRender.t); scheduleRender.t = setTimeout(renderPreview, 250); }
+
+  async function renderPreview() {
+    const token = ++renderToken;
+    const p = await getProfile(activeId()).catch((e) => { toast(e.message); return null; });
+    if (token !== renderToken) return;
+    const list = $("sheet-list");
+    if (!p) { list.textContent = ""; $("sheet-meta").textContent = "Diese Handschrift konnte nicht geladen werden."; return; }
+    const text = $("text").value.trim() ? $("text").value : " ";
+    const layout = new HS.Layout(p, { paper: state.paper, size: state.size, jitter: state.jitter, seed: state.seed }).pages(text);
+    lastLayout = { layout, profile: p, ink: state.ink };
+    const shown = layout.pages.slice(0, 4);
+    while (list.children.length > shown.length) list.lastChild.remove();
+    shown.forEach((items, i) => {
+      let sheet = list.children[i];
+      if (!sheet) { sheet = document.createElement("div"); sheet.className = "sheet"; sheet.appendChild(document.createElement("canvas")); list.appendChild(sheet); }
+      drawPage(sheet.firstChild, layout.paper, items, p, state.ink);
+    });
+    const miss = Object.keys(layout.missing);
+    $("sheet-meta").innerHTML = "";
+    const meta = document.createElement("span");
+    meta.textContent = `${layout.pages.length} ${layout.pages.length === 1 ? "Seite" : "Seiten"} · ${layout.lines} Zeilen` + (layout.pages.length > shown.length ? ` · Vorschau zeigt die ersten ${shown.length}` : "");
+    $("sheet-meta").appendChild(meta);
+    if (miss.length) {
+      const m = document.createElement("div"); m.className = "missing";
+      m.textContent = "Nicht gelernt (ersetzt oder ausgelassen): " + miss.join(" ");
+      $("sheet-meta").appendChild(m);
+    }
+  }
+
+  function drawPaperCanvas(ctx, paper, s) {
+    ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, HS.PAGE_W * s, HS.PAGE_H * s);
+    ctx.lineWidth = Math.max(1, 0.16 * s);
+    if (paper.style === "liniert") {
+      ctx.strokeStyle = "rgb(140,173,214)";
+      for (const y of paper.lines) { ctx.beginPath(); ctx.moveTo(0, y * s); ctx.lineTo(HS.PAGE_W * s, y * s); ctx.stroke(); }
+    } else if (paper.style === "kariert") {
+      ctx.strokeStyle = "rgb(158,184,214)"; ctx.lineWidth = Math.max(0.7, 0.1 * s);
+      for (let y = paper.top; y <= HS.PAGE_H - paper.bottom + 1e-6; y += 5) { ctx.beginPath(); ctx.moveTo(5 * s, y * s); ctx.lineTo((HS.PAGE_W - 5) * s, y * s); ctx.stroke(); }
+      for (let x = 5; x <= HS.PAGE_W - 5 + 1e-6; x += 5) { ctx.beginPath(); ctx.moveTo(x * s, paper.top * s); ctx.lineTo(x * s, (HS.PAGE_H - paper.bottom) * s); ctx.stroke(); }
+    }
+    if (paper.style !== "blanko") {
+      ctx.strokeStyle = "rgb(219,97,97)"; ctx.lineWidth = Math.max(1, 0.21 * s);
+      for (const x of [paper.left, HS.PAGE_W - paper.right]) { ctx.beginPath(); ctx.moveTo(x * s, 0); ctx.lineTo(x * s, HS.PAGE_H * s); ctx.stroke(); }
+    }
+  }
+
+  function drawPage(canvas, paper, items, p, ink) {
+    const cssW = canvas.parentNode.clientWidth || 600, dpr = Math.min(2, window.devicePixelRatio || 1);
+    const W = Math.round(cssW * dpr), H = Math.round(W * HS.PAGE_H / HS.PAGE_W), s = W / HS.PAGE_W;
+    canvas.width = W; canvas.height = H;
+    const ctx = canvas.getContext("2d");
+    drawPaperCanvas(ctx, paper, s);
+    for (const it of items) {
+      const t = tinted(p, it.glyph, ink);
+      ctx.save();
+      ctx.globalAlpha = it.opacity;
+      ctx.translate(it.x * s, it.baseline * s);
+      ctx.rotate((it.angle * Math.PI) / 180);
+      ctx.drawImage(t.canvas, 0, -(it.h - it.below) * s, it.w * s, it.h * s);
+      ctx.restore();
+    }
+  }
+
+  function buildPdf() {
+    const { layout, profile: p, ink } = lastLayout;
+    const doc = new window.jspdf.jsPDF({ unit: "mm", format: "a4", compress: true });
+    doc.setProperties({ title: "Handschrift von " + p.name, creator: "Handschrift-Generator" });
+    const states = {};
+    layout.pages.forEach((items, pi) => {
+      if (pi) doc.addPage();
+      const paper = layout.paper;
+      if (paper.style === "liniert") {
+        doc.setDrawColor(140, 173, 214); doc.setLineWidth(0.16);
+        for (const y of paper.lines) doc.line(0, y, HS.PAGE_W, y);
+      } else if (paper.style === "kariert") {
+        doc.setDrawColor(158, 184, 214); doc.setLineWidth(0.1);
+        for (let y = paper.top; y <= HS.PAGE_H - paper.bottom + 1e-6; y += 5) doc.line(5, y, HS.PAGE_W - 5, y);
+        for (let x = 5; x <= HS.PAGE_W - 5 + 1e-6; x += 5) doc.line(x, paper.top, x, HS.PAGE_H - paper.bottom);
+      }
+      if (paper.style !== "blanko") {
+        doc.setDrawColor(219, 97, 97); doc.setLineWidth(0.21);
+        doc.line(paper.left, 0, paper.left, HS.PAGE_H); doc.line(HS.PAGE_W - paper.right, 0, HS.PAGE_W - paper.right, HS.PAGE_H);
+      }
+      let curOpacity = null;
+      for (const it of items) {
+        const t = tinted(p, it.glyph, ink);
+        if (!t.url) t.url = t.canvas.toDataURL("image/png");
+        const o = Math.round(it.opacity * 20) / 20;
+        if (o !== curOpacity) { states[o] = states[o] || new doc.GState({ opacity: o }); doc.setGState(states[o]); curOpacity = o; }
+        // jsPDF turns images counter-clockwise around their bottom-left corner
+        doc.addImage(t.url, "PNG", it.x, it.baseline + it.below - it.h, it.w, it.h, t.alias, "FAST", -it.angle);
+      }
+    });
+    return doc.output("blob");
+  }
+
+  // ------------------------------------------------------------ learning
+  function fileToGray(file) {
+    return new Promise((resolve, reject) => {
+      const url = URL.createObjectURL(file), img = new Image();
+      img.onload = () => {
+        const long = Math.max(img.naturalWidth, img.naturalHeight), f = Math.min(1, 3400 / long);
+        const w = Math.round(img.naturalWidth * f), h = Math.round(img.naturalHeight * f);
+        const c = document.createElement("canvas"); c.width = w; c.height = h;
+        const ctx = c.getContext("2d"); ctx.drawImage(img, 0, 0, w, h);
+        const d = ctx.getImageData(0, 0, w, h).data, g = new Float32Array(w * h);
+        for (let i = 0; i < g.length; i++) g[i] = (0.299 * d[4 * i] + 0.587 * d[4 * i + 1] + 0.114 * d[4 * i + 2]) / 255;
+        URL.revokeObjectURL(url);
+        resolve(HS.image(w, h, g));
+      };
+      img.onerror = () => { URL.revokeObjectURL(url); reject(new HS.UserError("Das Bild kann nicht gelesen werden.")); };
+      img.src = url;
+    });
+  }
+
+  function controlImage(res) {
+    const s = 0.25, r = res.rectified, W = Math.round(r.w * s), H = Math.round(r.h * s);
+    const c = document.createElement("canvas"); c.width = W; c.height = H;
+    const ctx = c.getContext("2d"), im = ctx.createImageData(W, H);
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      const v = Math.round(255 * r.data[Math.min(r.h - 1, Math.round(y / s)) * r.w + Math.min(r.w - 1, Math.round(x / s))]);
+      const i = 4 * (y * W + x); im.data[i] = im.data[i + 1] = im.data[i + 2] = v; im.data[i + 3] = 255;
+    }
+    ctx.putImageData(im, 0, 0);
+    ctx.lineWidth = 2;
+    for (const b of res.boxes) {
+      ctx.strokeStyle = b.found ? "rgb(36,150,80)" : "rgb(220,50,50)";
+      ctx.strokeRect((b.slot.x * HS.PPM + b.dx) * s, (b.slot.y * HS.PPM + b.dy) * s, b.slot.w * HS.PPM * s, b.slot.h * HS.PPM * s);
+    }
+    return c;
+  }
+
+  async function handleFiles(files) {
+    const list = [...files].filter((f) => f.type.startsWith("image/") || /\.(jpe?g|png|heic|heif|webp)$/i.test(f.name));
+    if (!list.length) { toast("Bitte Fotos (JPG, PNG, HEIC) auswählen."); return; }
+    for (const file of list) {
+      const card = document.createElement("div"); card.className = "result";
+      const title = document.createElement("strong"); title.textContent = file.name || "Foto";
+      const status = document.createElement("span"); status.textContent = "Wird verarbeitet …";
+      card.append(title, status);
+      $("results").prepend(card);
+      await tick();
+      try {
+        const gray = await fileToGray(file);
+        await tick();
+        const det = HS.detectPage(gray);
+        await tick();
+        const res = HS.extractPage(gray, det);
+        state.learn.pages.push(res);
+        status.className = res.glyphs.length > 70 ? "status-ok" : "status-err";
+        status.textContent = `Seite ${res.page + 1}: ${res.glyphs.length} von ${HS.CHARSET.length} Zeichen erkannt` + (res.empty.length ? ` · leer: ${res.empty.join(" ")}` : "");
+        card.appendChild(controlImage(res));
+        res.rectified = null; // free memory
+      } catch (e) {
+        status.className = "status-err";
+        status.textContent = e instanceof HS.UserError ? e.message : "Fehler: " + e.message;
+      }
+      await tick();
+    }
+    updateLearnResult();
+  }
+
+  function updateLearnResult() {
+    const pages = state.learn.pages;
+    if (!pages.length) { $("step-result").hidden = true; return; }
+    const lists = pages.map((p) => p.glyphs);
+    const target = state.learn.target === "add" ? state.loaded.get($("add-target").value) : null;
+    if (target) {
+      lists.push(Object.values(target.glyphs).flat().map((g) => ({ ...g, png: g.png })));
+    }
+    const prof = HS.buildProfile(lists, target ? target.name : ($("new-name").value.trim() || "Meine Handschrift"));
+    for (const vs of Object.values(prof.glyphs)) vs.forEach((g) => { if (!g.profileL) HS.glyphProfiles(g); });
+    prof.id = "learn"; prof.tinted = {};
+    state.learn.profile = prof;
+    $("step-result").hidden = false;
+    const n = Object.keys(prof.glyphs).length, v = Object.values(prof.glyphs).reduce((a, l) => a + l.length, 0);
+    $("learn-summary").textContent = `${n} von ${HS.CHARSET.length} Zeichen gelernt (${v} Varianten).` + (prof.missing.length ? ` Fehlt noch: ${prof.missing.join(" ")}` : " Alles vollständig.");
+    drawOverview(prof);
+  }
+
+  function drawOverview(p) {
+    const c = $("overview"), cols = 22, cell = 54, rows = Math.ceil(HS.CHARSET.length / cols);
+    c.width = cols * cell; c.height = rows * cell * 1.25;
+    const ctx = c.getContext("2d");
+    ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, c.width, c.height);
+    const k = (cell * 0.32) / p.xHeightPx;
+    HS.CHARSET.forEach((ch, i) => {
+      const x0 = (i % cols) * cell, y0 = Math.floor(i / cols) * cell * 1.25, base = y0 + cell * 0.85;
+      ctx.strokeStyle = "#dfe6f2"; ctx.lineWidth = 1; ctx.strokeRect(x0 + 0.5, y0 + 0.5, cell - 1, cell * 1.25 - 1);
+      ctx.fillStyle = "#c33"; ctx.font = "11px sans-serif"; ctx.fillText(ch, x0 + 4, y0 + 12);
+      const g = p.glyphs[ch] && p.glyphs[ch][0];
+      if (!g) return;
+      const t = tinted(p, g, "dunkelblau");
+      const w = g.width * k, h = g.height * k;
+      ctx.drawImage(t.canvas, x0 + (cell - w) / 2, base - g.baseline * k, w, h);
+    });
+  }
+
+  async function saveLearned() {
+    const prof = state.learn.profile;
+    if (!prof) return;
+    const isAdd = state.learn.target === "add";
+    const name = isAdd ? prof.name : $("new-name").value.trim();
+    if (!name) { toast("Bitte gib dem Profil einen Namen."); $("new-name").focus(); return; }
+    prof.name = name;
+    $("save-profile").disabled = true; $("save-hint").textContent = "Speichere …";
+    try {
+      const id = isAdd ? $("add-target").value : slug(name);
+      const stored = dehydrate(prof);
+      const where = await Store.save(id, stored);
+      state.loaded.delete(id);
+      if (!state.profiles.has(id)) state.profiles.set(id, { id, name, source: where, meta: summary(stored) });
+      state.activeId = id; prefs(true);
+      state.learn = { target: state.learn.target, pages: [], profile: null };
+      $("results").textContent = ""; $("step-result").hidden = true;
+      renderProfiles();
+      toast(where === "shared" ? `„${name}“ gespeichert.` : `„${name}“ gespeichert – nur auf diesem Gerät.`);
+      showTab("write");
+      scheduleRender();
+    } catch (e) {
+      toast(e.message || "Speichern fehlgeschlagen.");
+    } finally {
+      $("save-profile").disabled = false; $("save-hint").textContent = "";
+    }
+  }
+
+  // ------------------------------------------------------------ profiles UI
+  function renderProfiles() {
+    const sel = $("profile-select"), add = $("add-target");
+    const entries = [...state.profiles.values()].sort((a, b) => (a.source === "demo") - (b.source === "demo") || a.name.localeCompare(b.name, "de"));
+    const current = activeId();
+    sel.textContent = ""; add.textContent = "";
+    for (const e of entries) {
+      const o = new Option(e.name + (e.source === "demo" ? " (Beispiel)" : ""), e.id, false, e.id === current);
+      sel.add(o);
+      if (e.source !== "demo") add.add(new Option(e.name, e.id));
+    }
+    $("target-seg").querySelector('[data-v="add"]').disabled = add.options.length === 0;
+
+    const pl = $("plist");
+    pl.textContent = "";
+    for (const e of entries) {
+      const item = document.createElement("div"); item.className = "pitem";
+      const info = document.createElement("div");
+      const h = document.createElement("h3"); h.textContent = e.name + " ";
+      const badge = document.createElement("span");
+      badge.className = "badge" + (e.source === "local" ? " local" : "");
+      badge.textContent = { demo: "Beispiel", shared: "Geteilt", local: "Nur dieses Gerät" }[e.source];
+      h.appendChild(badge);
+      const m = document.createElement("div"); m.className = "meta";
+      const meta = e.meta || {};
+      const created = meta.created ? new Date(meta.created).toLocaleDateString("de-DE") : "";
+      m.textContent = `${meta.chars ?? "?"} Zeichen · ${meta.variants ?? "?"} Varianten` + (created ? ` · angelegt ${created}` : "") + (meta.missing && meta.missing.length ? ` · fehlt: ${meta.missing.join(" ")}` : "");
+      info.append(h, m);
+      const actions = document.createElement("div"); actions.className = "row";
+      const use = document.createElement("button"); use.className = "btn"; use.type = "button"; use.textContent = "Damit schreiben";
+      use.onclick = () => { state.activeId = e.id; prefs(true); renderProfiles(); showTab("write"); scheduleRender(); };
+      const exp = document.createElement("button"); exp.className = "btn"; exp.type = "button"; exp.textContent = "Exportieren";
+      exp.onclick = async () => {
+        const p = await getProfile(e.id);
+        const stored = dehydrate(p);
+        await offerFile(`handschrift-${e.name.replace(/[^\wäöüÄÖÜß-]+/g, "_")}.json`, new Blob([JSON.stringify(stored)], { type: "application/json" }));
+      };
+      actions.append(use, exp);
+      if (e.source !== "demo") {
+        const del = document.createElement("button"); del.className = "btn danger"; del.type = "button"; del.textContent = "Löschen";
+        del.onclick = () => {
+          const box = document.createElement("div"); box.className = "confirm";
+          box.textContent = `„${e.name}“ wirklich löschen?`;
+          const yes = document.createElement("button"); yes.className = "btn danger"; yes.type = "button"; yes.textContent = "Ja, löschen";
+          const no = document.createElement("button"); no.className = "btn"; no.type = "button"; no.textContent = "Abbrechen";
+          yes.onclick = async () => {
+            try { await Store.remove(e); state.profiles.delete(e.id); state.loaded.delete(e.id); toast(`„${e.name}“ gelöscht.`); }
+            catch (err) { toast("Löschen nicht möglich (fehlende Rechte?)."); }
+            renderProfiles(); scheduleRender();
+          };
+          no.onclick = () => renderProfiles();
+          box.append(yes, no);
+          actions.replaceWith(box);
+        };
+        actions.append(del);
+      }
+      item.append(info, actions);
+      pl.appendChild(item);
+    }
+    $("storage-hint").textContent = Store.db
+      ? "Handschriften werden mit dieser Seite gespeichert und stehen allen zur Verfügung, die die Seite öffnen und bearbeiten dürfen. Ohne Schreibrechte bleibt ein Profil auf deinem Gerät – sichere es dann per „Exportieren“."
+      : "Handschriften werden auf diesem Gerät im Browser gespeichert. Sichere sie per „Exportieren“, damit sie beim Löschen der Browserdaten nicht verloren gehen.";
+  }
+
+  async function importProfile(file) {
+    try {
+      const stored = JSON.parse(await file.text());
+      if (!stored || !stored.glyphs || !stored.xHeightPx) throw new Error("Das ist keine Handschrift-Datei.");
+      const id = slug(stored.name || "import");
+      const where = await Store.save(id, stored);
+      if (!state.profiles.has(id)) state.profiles.set(id, { id, name: stored.name, source: where, meta: summary(stored) });
+      renderProfiles();
+      toast(`„${stored.name}“ importiert.`);
+    } catch (e) { toast(e.message || "Import fehlgeschlagen."); }
+  }
+
+  // ------------------------------------------------------------ wiring
+  function showTab(name) {
+    for (const t of ["write", "learn", "profiles"]) {
+      $("tab-" + t).setAttribute("aria-selected", String(t === name));
+      $("view-" + t).hidden = t !== name;
+    }
+    if (name === "write") scheduleRender();
+  }
+  function segment(id, onChange) {
+    $(id).addEventListener("click", (ev) => {
+      const b = ev.target.closest("button[data-v]");
+      if (!b || b.disabled) return;
+      for (const x of $(id).querySelectorAll("button")) x.setAttribute("aria-pressed", String(x === b));
+      onChange(b.dataset.v);
+    });
+  }
+  function setSeg(id, v) { for (const x of $(id).querySelectorAll("button")) x.setAttribute("aria-pressed", String(x.dataset.v === v)); }
+
+  function init() {
+    const demo = JSON.parse($("demo-profile").textContent);
+    state.profiles.set("demo", { id: "demo", name: demo.name, source: "demo", stored: demo, meta: summary(demo) });
+
+    const saved = prefs(false);
+    $("text").value = (saved && saved.text) || SAMPLE;
+    if (saved) {
+      Object.assign(state, { paper: saved.paper || "liniert", ink: INKS[saved.ink] ? saved.ink : "blau", size: +saved.size || 1, jitter: saved.jitter ?? 1, activeId: saved.activeId || "demo" });
+    }
+    setSeg("paper-seg", state.paper);
+    $("size").value = state.size; $("jitter").value = state.jitter;
+
+    const inks = $("inks");
+    for (const [k, rgb] of Object.entries(INKS)) {
+      const b = document.createElement("button");
+      b.type = "button"; b.className = "ink"; b.style.background = `rgb(${rgb.join(",")})`;
+      b.title = INK_NAMES[k]; b.setAttribute("aria-label", "Tinte " + INK_NAMES[k]); b.setAttribute("aria-pressed", String(k === state.ink));
+      b.onclick = () => { state.ink = k; for (const x of inks.children) x.setAttribute("aria-pressed", String(x === b)); prefs(true); scheduleRender(); };
+      inks.appendChild(b);
+    }
+    const sizeOut = () => { $("size-out").textContent = Math.round(state.size * 100) + " %"; };
+    const jitterOut = () => { $("jitter-out").textContent = state.jitter < 0.35 ? "exakt" : state.jitter < 1.35 ? "normal" : "locker"; };
+    sizeOut(); jitterOut();
+    $("size").oninput = () => { state.size = +$("size").value; sizeOut(); prefs(true); scheduleRender(); };
+    $("jitter").oninput = () => { state.jitter = +$("jitter").value; jitterOut(); prefs(true); scheduleRender(); };
+    $("text").oninput = () => { prefs(true); scheduleRender(); };
+    segment("paper-seg", (v) => { state.paper = v; prefs(true); scheduleRender(); });
+    $("reroll").onclick = () => { state.seed = Math.floor(Math.random() * 1e9); scheduleRender(); };
+    $("profile-select").onchange = () => { state.activeId = $("profile-select").value; prefs(true); scheduleRender(); };
+    for (const t of ["write", "learn", "profiles"]) $("tab-" + t).onclick = () => showTab(t);
+
+    $("save-pdf").onclick = async () => {
+      if (!window.jspdf) { toast("Die PDF-Bibliothek konnte nicht geladen werden. Prüfe die Internetverbindung und lade die Seite neu."); return; }
+      if (!lastLayout) return;
+      $("save-pdf").disabled = true;
+      try {
+        await tick();
+        const blob = buildPdf();
+        const name = lastLayout.profile.name.replace(/[^\wäöüÄÖÜß-]+/g, "_");
+        await offerFile(`handschrift_${name}_${new Date().toISOString().slice(0, 10)}.pdf`, blob);
+      } catch (e) { toast("PDF konnte nicht erstellt werden: " + e.message); }
+      finally { $("save-pdf").disabled = false; }
+    };
+    $("save-template").onclick = () => offerFile("handschrift_vorlage.pdf", new Blob([b64ToBytes(TEMPLATE_PDF_B64)], { type: "application/pdf" }));
+
+    segment("target-seg", (v) => {
+      state.learn.target = v;
+      $("new-name-field").hidden = v !== "new"; $("add-target-field").hidden = v !== "add";
+      if (v === "add") getProfile($("add-target").value).then(updateLearnResult); else updateLearnResult();
+    });
+    $("add-target").onchange = () => getProfile($("add-target").value).then(updateLearnResult);
+    $("new-name").oninput = () => { if (state.learn.profile && state.learn.target === "new") state.learn.profile.name = $("new-name").value.trim(); };
+    $("pick-photos").onclick = () => $("photos").click();
+    $("photos").onchange = () => { handleFiles($("photos").files); $("photos").value = ""; };
+    const drop = $("drop");
+    drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("over"); });
+    drop.addEventListener("dragleave", () => drop.classList.remove("over"));
+    drop.addEventListener("drop", (e) => { e.preventDefault(); drop.classList.remove("over"); handleFiles(e.dataTransfer.files); });
+    $("save-profile").onclick = saveLearned;
+    $("import").onclick = () => $("import-file").click();
+    $("import-file").onchange = () => { if ($("import-file").files[0]) importProfile($("import-file").files[0]); $("import-file").value = ""; };
+    window.addEventListener("resize", scheduleRender);
+
+    renderProfiles();
+    renderPreview();
+    Store.init().then(() => { if (state.activeId !== "demo") scheduleRender(); });
+  }
+
+  init();
+})();
+</script>
