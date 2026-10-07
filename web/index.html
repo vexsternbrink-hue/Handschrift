@@ -114,6 +114,9 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 .pitem .meta { color: var(--muted); font-size: .9rem; font-variant-numeric: tabular-nums; }
 .confirm { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; color: var(--margin); font-weight: 700; }
 
+.ai-box { display: grid; gap: 8px; background: var(--accent-soft); border-radius: 8px; padding: 10px 12px; }
+.ai-box .hint { color: var(--fg); }
+.btn.small { padding: 5px 10px; font-size: .9rem; }
 .toast { position: fixed; left: 50%; bottom: calc(18px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); background: var(--fg); color: var(--bg); padding: 10px 16px; border-radius: 8px; max-width: calc(100% - 32px); box-shadow: var(--shadow); z-index: 10; }
 @media (prefers-reduced-motion: no-preference) { .toast { transition: opacity .2s; } }
 </style>
@@ -163,6 +166,10 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
         <div class="row">
           <button class="btn primary" id="save-pdf" type="button">PDF speichern</button>
           <button class="btn" id="reroll" type="button">Neu schreiben</button>
+        </div>
+        <div class="ai-box" id="ai-box" hidden>
+          <div class="row"><span class="badge">KI-Prüfung</span><button class="btn small" id="ai-check" type="button">Blatt jetzt prüfen</button></div>
+          <p id="ai-note" class="hint">Vor dem Speichern schaut sich Claude das fertige Blatt an und stellt Abstände und Größe nach.</p>
         </div>
         <p class="hint" id="pdf-hint">„Neu schreiben“ wählt andere Buchstaben-Varianten und Schwankungen. Das PDF entspricht genau der Vorschau.</p>
       </div>
@@ -224,6 +231,7 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
         <div class="body">
           <h2>Ergebnis prüfen und speichern</h2>
           <p id="learn-summary"></p>
+          <p id="ai-review" class="hint" hidden></p>
           <canvas class="overview" id="overview" width="1200" height="400" aria-label="Alle erkannten Zeichen"></canvas>
           <div class="row"><button class="btn primary" id="save-profile" type="button">Handschrift speichern</button><span class="hint" id="save-hint"></span></div>
         </div>
@@ -277,8 +285,6 @@ if (!window.jspdf) {
   const PPM = 10; // rectified pixels per mm
 
   const CHARSET = Array.from("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzÄÖÜäöüß0123456789.,;:!?-()\"'„“/+&%€=");
-  const BASELINE_CHARS = new Set(Array.from("ABCDEFGHIKLMNOPRSTUVWXYZabcdehiklmnorstuvwxzÄÖÜäöü0123456789.!?:&%€"));
-  const XHEIGHT_CHARS = "acemnorsuvwxz", CAPHEIGHT_CHARS = "ABDEFHIKLMNPRTUVWXZ";
 
   // Inner 4x4 bits (row-major, 1 = black) of ArUco DICT_4X4_50 ids 0..47.
   const MARKER_CODES = ["0100101011001101", "1111000001100101", "1100110011010010", "0110011010111001", "1010101101100001", "1000011000110010", "0110000111010001", "0011101100001101", "0000000100100101", "0011000010101001", "0000011001101110", "1110111001011000", "1111000101001000", "1101010111110000", "1101101101001110", "1101100111000001", "1011100110011010", "1001100111111111", "1001001110100001", "1000100101010000", "0111100101110100", "0100111111010100", "0011001100101010", "0010001001111101", "0000000110111000", "0110101110001110", "0101001100011011", "0101101010101011", "1101111011011100", "1100101110010000", "1011101111101010", "1010100001001101", "0110000100110000", "0000111100110100", "1111011101010001", "1111011011010110", "1110011110001010", "1111101100000000", "1111001000001001", "1110001110100101", "1110100011100111", "1101010111010111", "1100110101110011", "1100011101001101", "1101101100010111", "1101000100010100", "1101001011000000", "1011010010011011"];
@@ -686,7 +692,11 @@ if (!window.jspdf) {
         if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
       }
     }
-    if (total < 0.35 * PPM * PPM) return null;
+    // small marks (full stop, i-dot) are kept, but only if they are real pen
+    // ink, not a faint speck of paper texture or a printed guide dot
+    let darkest = 1;
+    for (let l = 1; l <= n; l++) if (keep[l] && minVal[l] < darkest) darkest = minVal[l];
+    if (total < 0.1 * PPM * PPM || darkest > 0.5) return null;
 
     const alpha = new Float32Array(cw * ch), inMask = [];
     for (let y = 0; y < ch; y++) for (let x = 0; x < cw; x++) {
@@ -737,23 +747,235 @@ if (!window.jspdf) {
 
   function median(a) { if (!a.length) return null; const s = [...a].sort((x, y) => x - y), m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; }
 
+  // ------------------------------------------------------- tidying the set
+  // People never write exactly on the printed guide lines, so baselines and
+  // sizes are derived from the shapes themselves: a letter that sits on the
+  // line has its ink bottom on the baseline, g/p/q/y have their top at the
+  // x-height, punctuation goes where it belongs typographically. Sizes are
+  // pulled most of the way (not all the way) towards the writer's own
+  // typical size for that kind of character, so the result stays personal
+  // but looks orderly.
+  const X_CHARS = "acemnorsuvwxz", CAP_CLASS = "ABCDEFGHIKLMNOPRSTUVWXYZ", ASC_CLASS = "bdhkl";
+  const DESC_CLASS = "gpqy", DIGITS = "0123456789";
+  const SIZE_PULL = 0.7, SCALE_MIN = 0.72, SCALE_MAX = 1.4;
+  const BASE_OF = { "Ä": "A", "Ö": "O", "Ü": "U", "ä": "a", "ö": "o", "ü": "u", "ß": "b" };
+
+  function inkHeight(g) { return g.inkBottom - g.inkTop; }
+
+  function sameGlyph(a, b) {
+    if (a.width !== b.width || a.height !== b.height || !a.alpha || !b.alpha) return false;
+    let diff = 0;
+    for (let i = 0; i < a.alpha.length; i += 3) diff += Math.abs(a.alpha[i] - b.alpha[i]);
+    return diff / (a.alpha.length / 3) < 2;
+  }
+
+  /** The separate ink pieces of a glyph (e.g. the two dots of ':'). */
+  function pieces(g) {
+    const mask = new Uint8Array(g.width * g.height);
+    for (let i = 0; i < mask.length; i++) mask[i] = g.alpha[i] > 60 ? 1 : 0;
+    const { labels, n, stats } = components(mask, g.width, g.height);
+    const out = [];
+    for (let l = 1; l <= n; l++) if (stats[l].area >= 3) out.push({ ...stats[l], label: l });
+    return { labels, list: out };
+  }
+
+  function cutPiece(g, piece, labels, char) {
+    const pad = 3, x0 = Math.max(0, piece.x0 - pad), y0 = Math.max(0, piece.y0 - pad);
+    const x1 = Math.min(g.width, piece.x1 + 1 + pad), y1 = Math.min(g.height, piece.y1 + 1 + pad);
+    const w = x1 - x0, h = y1 - y0, alpha = new Uint8Array(w * h);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const i = (y + y0) * g.width + x + x0;
+      // keep anti-aliased edge pixels next to the piece
+      let near = false;
+      for (let dy = -1; dy <= 1 && !near; dy++) for (let dx = -1; dx <= 1; dx++) {
+        const yy = y + y0 + dy, xx = x + x0 + dx;
+        if (yy >= 0 && yy < g.height && xx >= 0 && xx < g.width && labels[yy * g.width + xx] === piece.label) { near = true; break; }
+      }
+      if (near) alpha[y * w + x] = g.alpha[i];
+    }
+    return {
+      char, width: w, height: h, alpha, synthetic: true, templateBaseline: 0,
+      inkLeft: piece.x0 - x0, inkTop: piece.y0 - y0, inkRight: piece.x1 + 1 - x0, inkBottom: piece.y1 + 1 - y0,
+    };
+  }
+
+  /** Overlay two glyph images: `mark` placed with its ink centred at (cx, bottomY) of `base`. */
+  function compose(base, marks, char) {
+    let x0 = 0, y0 = 0, x1 = base.width, y1 = base.height;
+    for (const m of marks) { x0 = Math.min(x0, m.x); y0 = Math.min(y0, m.y); x1 = Math.max(x1, m.x + m.g.width); y1 = Math.max(y1, m.y + m.g.height); }
+    const w = x1 - x0, h = y1 - y0, alpha = new Uint8Array(w * h);
+    const put = (src, ox, oy) => {
+      for (let y = 0; y < src.height; y++) for (let x = 0; x < src.width; x++) {
+        const i = (y + oy - y0) * w + x + ox - x0;
+        alpha[i] = Math.max(alpha[i], src.alpha[y * src.width + x]);
+      }
+    };
+    put(base, 0, 0);
+    let top = base.inkTop - y0;
+    for (const m of marks) { put(m.g, m.x, m.y); top = Math.min(top, m.y - y0 + m.g.inkTop); }
+    return {
+      char, width: w, height: h, alpha, synthetic: true, templateBaseline: 0,
+      inkLeft: base.inkLeft - x0, inkRight: base.inkRight - x0, inkTop: top, inkBottom: base.inkBottom - y0,
+    };
+  }
+
+  /** Fill gaps from the writer's own ink: a full stop from the lower dot of
+   *  ':' or '!', a comma from ';', umlauts from the base letter + i-dots. */
+  function synthesizeMissing(glyphs) {
+    const lowest = (src) => {
+      for (const g of src) {
+        const { labels, list } = pieces(g);
+        if (list.length < 2) continue;
+        const piece = list.reduce((a, b) => (b.y1 > a.y1 ? b : a));
+        if ((piece.x1 - piece.x0) < g.width * 0.9) return cutPiece(g, piece, labels, null);
+      }
+      return null;
+    };
+    if (!glyphs["."]) {
+      const dot = lowest([...(glyphs[":"] || []), ...(glyphs["!"] || []), ...(glyphs["?"] || [])]);
+      if (dot) { dot.char = "."; glyphs["."] = [dot]; }
+    }
+    if (!glyphs[","] && glyphs[";"]) {
+      const c = lowest(glyphs[";"]);
+      if (c) { c.char = ","; glyphs[","] = [c]; }
+    }
+    // i-dot for umlauts
+    let dot = null;
+    for (const g of glyphs.i || []) {
+      const { labels, list } = pieces(g);
+      if (list.length >= 2) { const top = list.reduce((a, b) => (b.y0 < a.y0 ? b : a)); dot = cutPiece(g, top, labels, "dot"); break; }
+    }
+    if (!dot && glyphs["."]) dot = glyphs["."][0];
+    if (dot) {
+      for (const [uml, base] of Object.entries({ "Ä": "A", "Ö": "O", "Ü": "U", "ä": "a", "ö": "o", "ü": "u" })) {
+        if (glyphs[uml] || !glyphs[base]) continue;
+        glyphs[uml] = glyphs[base].map((b) => {
+          const iw = b.inkRight - b.inkLeft, ih = b.inkBottom - b.inkTop;
+          const gapY = Math.max(2, Math.round(ih * (uml === uml.toUpperCase() ? 0.12 : 0.25)));
+          const dw = dot.inkRight - dot.inkLeft, dh = dot.inkBottom - dot.inkTop;
+          const y = b.inkTop - gapY - dh - dot.inkTop;
+          const cx1 = b.inkLeft + iw * 0.32, cx2 = b.inkLeft + iw * 0.68;
+          return compose(b, [
+            { g: dot, x: Math.round(cx1 - dw / 2 - dot.inkLeft), y },
+            { g: dot, x: Math.round(cx2 - dw / 2 - dot.inkLeft), y },
+          ], uml);
+        });
+      }
+    }
+  }
+
+  /** A new variant of a glyph: same letter, slightly different hand movement
+   *  (smooth wobble, a touch of slant and width change). Deterministic per seed. */
+  function warpGlyph(g, seed) {
+    const r = rng(seed), pad = 4, W = g.width + 2 * pad, H = g.height + 2 * pad;
+    const ink = Math.max(8, g.inkBottom - g.inkTop);
+    const amp = ink * 0.022, shear = (r.uniform() - 0.5) * 0.12, sx = 0.94 + r.uniform() * 0.12, rot = (r.uniform() - 0.5) * 0.05;
+    const f1 = 0.8 + r.uniform() * 1.2, f2 = 0.8 + r.uniform() * 1.2, p1 = r.uniform() * 6.28, p2 = r.uniform() * 6.28;
+    const cx = (g.inkLeft + g.inkRight) / 2, by = g.inkBottom; // keep the foot of the letter in place
+    const out = new Uint8Array(W * H), src = image(g.width, g.height, Float32Array.from(g.alpha));
+    const cos = Math.cos(rot), sin = Math.sin(rot);
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      // inverse map: output pixel -> source pixel
+      let u = x - pad - cx, v = y - pad - by;
+      const wu = u + amp * Math.sin((v / ink) * f1 * 6.28 + p1), wv = v + amp * Math.sin((u / ink) * f2 * 6.28 + p2);
+      let a = (cos * wu + sin * wv), b = (-sin * wu + cos * wv);
+      a = (a - shear * b) / sx;
+      const sxp = a + cx, syp = b + by;
+      if (sxp < 0 || syp < 0 || sxp > g.width - 1 || syp > g.height - 1) continue;
+      const v0 = bilinear(src, sxp, syp);
+      out[y * W + x] = v0 > 255 ? 255 : Math.round(v0);
+    }
+    let x0 = W, x1 = -1, y0 = H, y1 = -1;
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (out[y * W + x] > 60) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+    if (x1 < 0) return null;
+    return {
+      char: g.char, width: W, height: H, alpha: out, synthetic: true, templateBaseline: 0,
+      inkLeft: x0, inkRight: x1 + 1, inkTop: y0, inkBottom: y1 + 1,
+    };
+  }
+
+  /** Recompute baseline + scale of every glyph and the profile metrics.
+   *  Works on freshly extracted glyphs and on stored profiles alike. */
+  function normalizeProfile(p) {
+    const glyphs = p.glyphs;
+    synthesizeMissing(glyphs);
+    const charMedian = {};
+    for (const [ch, list] of Object.entries(glyphs)) {
+      // the same page uploaded twice gives identical copies - they add no variety
+      const vs = list.filter((g, i) => !list.slice(0, i).some((o) => sameGlyph(o, g)));
+      glyphs[ch] = vs;
+      // drop variants that are wildly off in size (a slip, a cut-off stroke)
+      if (vs.length > 1) {
+        const med = median(vs.map(inkHeight));
+        const kept = vs.filter((g) => Math.abs(inkHeight(g) / med - 1) <= 0.45);
+        if (kept.length) glyphs[ch] = kept;
+      }
+      charMedian[ch] = median(glyphs[ch].map(inkHeight));
+      // fewer than 3 real variants: add gentle variations of the writer's own letters
+      const real = glyphs[ch].filter((g) => !g.synthetic || g.char === "." || BASE_OF[ch]);
+      if (/[\p{L}\p{N}]/u.test(ch) && real.length && glyphs[ch].length < 3) {
+        for (let k = 0; glyphs[ch].length < 3 && k < 6; k++) {
+          const w = warpGlyph(real[k % real.length], ch.codePointAt(0) * 31 + k * 7 + 1);
+          if (w) { w.derivedFrom = real[k % real.length]; glyphs[ch].push(w); }
+        }
+      }
+      glyphs[ch].forEach((g, i) => { g.variant = i; });
+    }
+    const classH = (chars) => median(Array.from(chars).filter((c) => charMedian[c]).map((c) => charMedian[c]));
+    let xh = classH(X_CHARS), cap = classH(CAP_CLASS);
+    if (xh == null && cap == null) { xh = 4.5 * (p.pxPerMm || PPM); cap = xh * 1.9; }
+    else if (xh == null) xh = cap * 0.55;
+    else if (cap == null) cap = xh * 1.9;
+    const asc = classH(ASC_CLASS) || cap, dig = classH(DIGITS) || cap, desc = classH(DESC_CLASS) || xh * 1.7;
+    const target = (c) => X_CHARS.includes(c) ? xh : CAP_CLASS.includes(c) ? cap : ASC_CLASS.includes(c) ? asc
+      : DIGITS.includes(c) ? dig : DESC_CLASS.includes(c) ? desc : null;
+    const clampS = (v) => Math.min(SCALE_MAX, Math.max(SCALE_MIN, v));
+    const charScale = {};
+    for (const ch of Object.keys(glyphs)) {
+      const t = target(ch);
+      charScale[ch] = t ? clampS(Math.pow(t / charMedian[ch], SIZE_PULL)) : 1;
+    }
+    for (const [ch, base] of Object.entries(BASE_OF)) if (glyphs[ch] && charScale[base]) charScale[ch] = charScale[base];
+
+    for (const [ch, vs] of Object.entries(glyphs)) {
+      for (const g of vs) {
+        // variants of one character are also pulled towards each other
+        const h = Math.max(1, inkHeight(g));
+        g.scale = clampS(charScale[ch] * Math.pow(charMedian[ch] / h, 0.5));
+        const mid = (g.inkTop + g.inkBottom) / 2;
+        let b;
+        if (DESC_CLASS.includes(ch)) b = g.inkTop + xh / g.scale;
+        else if (ch === "Q") b = g.inkBottom - 0.08 * h;
+        else if (ch === "," || ch === "„") b = g.inkTop + 0.22 * xh;
+        else if (ch === ";") b = g.inkTop + 0.72 * xh;
+        else if (ch === "-") b = mid + 0.45 * xh;
+        else if (ch === "+" || ch === "=") b = mid + 0.5 * xh;
+        else if (ch === "'" || ch === '"' || ch === "“") b = g.inkTop + cap;
+        else if (ch === "(" || ch === ")" || ch === "/") b = g.inkBottom - 0.22 * xh;
+        else b = g.inkBottom;
+        g.baseline = b;
+      }
+    }
+    if (glyphs.j) {
+      const descents = [];
+      for (const c of DESC_CLASS) for (const g of glyphs[c] || []) descents.push((g.inkBottom - g.baseline) * g.scale);
+      const d = median(descents) || 0.7 * xh;
+      for (const g of glyphs.j) g.baseline = g.inkBottom - d / g.scale;
+    }
+    for (const vs of Object.values(glyphs)) for (const g of vs) if (!g.profileL && g.alpha) glyphProfiles(g);
+    p.xHeightPx = xh;
+    p.capHeightPx = cap;
+    p.missing = CHARSET.filter((c) => !glyphs[c]);
+    return p;
+  }
+
   /** Combine the glyphs of all pages into a profile (without image encoding). */
   function buildProfile(glyphLists, name) {
     const glyphs = {};
     for (const list of glyphLists) for (const g of list) (glyphs[g.char] = glyphs[g.char] || []).push(g);
-    const all = Object.values(glyphs).flat();
-    let offset = median(all.filter((g) => BASELINE_CHARS.has(g.char)).map((g) => g.inkBottom - g.templateBaseline)) || 0;
-    offset = Math.max(-3 * PPM, Math.min(3 * PPM, offset));
-    for (const g of all) {
-      const guide = g.templateBaseline + offset;
-      g.baseline = BASELINE_CHARS.has(g.char) && Math.abs(g.inkBottom - guide) < 3.5 * PPM ? g.inkBottom : guide;
-    }
-    const height = (chars) => median(all.filter((g) => chars.includes(g.char)).map((g) => g.baseline - g.inkTop));
-    let xh = height(XHEIGHT_CHARS), cap = height(CAPHEIGHT_CHARS);
-    if (xh == null && cap == null) { xh = 5 * PPM; cap = 8 * PPM; } else if (xh == null) xh = cap * 0.62; else if (cap == null) cap = xh / 0.62;
     const ordered = {};
-    for (const ch of CHARSET) if (glyphs[ch]) ordered[ch] = glyphs[ch].map((g, i) => ({ ...g, variant: i }));
-    return { name, pxPerMm: PPM, xHeightPx: xh, capHeightPx: cap, glyphs: ordered, missing: CHARSET.filter((c) => !glyphs[c]) };
+    for (const ch of CHARSET) if (glyphs[ch]) ordered[ch] = glyphs[ch].map((g) => ({ ...g }));
+    return normalizeProfile({ name, pxPerMm: PPM, glyphs: ordered });
   }
 
   // ---------------------------------------------------------------- text
@@ -811,18 +1033,22 @@ if (!window.jspdf) {
   }
 
   // ---------------------------------------------------------------- layout
-  const BASE_X_HEIGHT_MM = 2.9, CAP_RATIO = 0.62, KERN_STEP = 0.08;
+  const BASE_X_HEIGHT_MM = 2.9, MIN_X_HEIGHT_MM = 2.5, MAX_X_HEIGHT_MM = 3.5, CAP_RATIO = 0.64, KERN_STEP = 0.08;
 
   class Layout {
     /** profile: {xHeightPx, capHeightPx, glyphs: {char: [{width,height,baseline,inkLeft,inkRight,profileL,profileR,...}]}} */
     constructor(profile, opts) {
       this.p = profile;
-      this.opts = Object.assign({ paper: "liniert", size: 1, jitter: 1, seed: 1 }, opts || {});
+      this.opts = Object.assign({ paper: "liniert", size: 1, jitter: 1, seed: 1, letterSpacing: 1, wordSpacing: 1 }, opts || {});
       this.paper = paperSpec(this.opts.paper, this.opts.lineSpacing);
       this.r = rng(this.opts.seed);
       this.j = Math.max(0, this.opts.jitter);
       const sp = this.paper.spacing;
-      let k = Math.min(BASE_X_HEIGHT_MM / profile.xHeightPx, (CAP_RATIO * sp) / profile.capHeightPx);
+      // write at the person's own size (as measured on the template), within
+      // what looks right on school paper
+      const natural = profile.xHeightPx / (profile.pxPerMm || PPM);
+      const xhMm = Math.min(MAX_X_HEIGHT_MM, Math.max(MIN_X_HEIGHT_MM, natural || BASE_X_HEIGHT_MM));
+      let k = Math.min(xhMm / profile.xHeightPx, (CAP_RATIO * sp) / profile.capHeightPx);
       this.k = Math.min(k * this.opts.size, (0.45 * sp) / profile.xHeightPx);
       this.xh = profile.xHeightPx * this.k;
       this.missing = {};
@@ -855,12 +1081,12 @@ if (!window.jspdf) {
     }
 
     nextX(prev, g, k, xAfter) {
-      const gap = this.xh * Math.max(0.08, 0.2 + this.n(0.04));
+      const gap = this.xh * Math.max(0.05, 0.15 * this.opts.letterSpacing + this.n(0.035));
       const ys = [];
       for (let y = -4 * this.xh; y < 2 * this.xh; y += KERN_STEP) ys.push(y);
       const ra = this.sample(prev.g, prev.k, ys, 1).map((v) => (isNaN(v) ? -Infinity : prev.x + v));
       const lb = this.sample(g, k, ys, 0).map((v) => (isNaN(v) ? Infinity : v));
-      const reach = Math.round((0.3 * this.xh) / KERN_STEP);
+      const reach = Math.round((0.18 * this.xh) / KERN_STEP);
       let need = -Infinity;
       for (let i = 0; i < ys.length; i++) {
         if (lb[i] === Infinity) continue;
@@ -869,6 +1095,8 @@ if (!window.jspdf) {
         if (m > -Infinity && m - lb[i] > need) need = m - lb[i];
       }
       if (need === -Infinity) return xAfter + gap;
+      // letters may tuck into each other like real handwriting; punctuation keeps its distance
+      if (!/[\p{L}\p{N}]/u.test(prev.g.char || "") || !/[\p{L}\p{N}]/u.test(g.char || "")) return Math.max(need + gap, xAfter + gap);
       const minW = Math.min((prev.g.inkRight - prev.g.inkLeft) * prev.k, (g.inkRight - g.inkLeft) * k);
       return Math.max(need + gap, xAfter - 0.4 * minW);
     }
@@ -882,7 +1110,7 @@ if (!window.jspdf) {
         if (sub !== ch) this.missing[ch] = (this.missing[ch] || 0) + 1;
         for (const c of Array.from(sub)) {
           const g = this.pick(c);
-          const k = this.k * (1 + Math.max(-0.08, Math.min(0.08, this.n(0.03))));
+          const k = this.k * (g.scale || 1) * (1 + Math.max(-0.08, Math.min(0.08, this.n(0.03))));
           if (glyphs.length) x = this.nextX(glyphs[glyphs.length - 1], g, k, x);
           glyphs.push({ g, x, k, dy: this.n(0.07), angle: this.n(1.2), opacity: 1 - Math.abs(this.n(0.05)) });
           x += (g.inkRight - g.inkLeft) * k;
@@ -891,7 +1119,7 @@ if (!window.jspdf) {
       return { glyphs, width: x };
     }
 
-    space() { return this.xh * (0.95 + this.n(0.12)); }
+    space() { return this.xh * (0.95 * this.opts.wordSpacing + this.n(0.12)); }
 
     splitLong(word, avail) {
       const parts = [];
@@ -967,7 +1195,7 @@ if (!window.jspdf) {
   const api = {
     PAGE_W, PAGE_H, PPM, CHARSET, slots, markerCornersMm, UserError,
     image, shrink, components, homography, apply, matInv,
-    findMarkers, detectPage, rectify, flatten, extractPage, buildProfile,
+    findMarkers, detectPage, rectify, flatten, extractPage, buildProfile, normalizeProfile,
     normalizeText, fallbackChain, rng, paperSpec, Layout, glyphProfiles,
   };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
@@ -988,6 +1216,7 @@ const TEMPLATE_PDF_B64 = "JVBERi0xLjMKJZOMi54gUmVwb3J0TGFiIEdlbmVyYXRlZCBQREYgZG
     blau: [26, 51, 148], koenigsblau: [31, 64, 179], dunkelblau: [20, 31, 97], schwarz: [18, 18, 23], rot: [191, 26, 31], gruen: [13, 107, 51],
   };
   const INK_NAMES = { blau: "Blau", koenigsblau: "Königsblau", dunkelblau: "Dunkelblau", schwarz: "Schwarz", rot: "Rot", gruen: "Grün" };
+  const DEFAULT_STYLE = { letterSpacing: 1, wordSpacing: 1, size: 1, jitter: 1 };
   const SAMPLE = "Liebe Oma,\n\nvielen Dank für das schöne Päckchen! Ich habe mich riesig gefreut. Die Kekse waren köstlich – leider sind sie schon alle weg ;-)\n\nAm Samstag, den 14.11., komme ich um 15:30 Uhr vorbei. Soll ich etwas mitbringen? Mama meint: „Bring Blumen mit!“\n\nViele liebe Grüße\ndeine Lena";
 
   const state = {
@@ -1074,16 +1303,19 @@ const TEMPLATE_PDF_B64 = "JVBERi0xLjMKJZOMi54gUmVwb3J0TGFiIEdlbmVyYXRlZCBQREYgZG
       });
     }
     await Promise.all(jobs);
-    return { id, name: stored.name, pxPerMm: stored.pxPerMm, xHeightPx: stored.xHeightPx, capHeightPx: stored.capHeightPx, missing: stored.missing || [], glyphs, tinted: {} };
+    const p = { id, name: stored.name, created: stored.created, pxPerMm: stored.pxPerMm, glyphs, style: Object.assign({}, DEFAULT_STYLE, stored.style), review: stored.review || null, tinted: {} };
+    return HS.normalizeProfile(p);
   }
 
   /** runtime/built profile -> stored JSON */
   function dehydrate(p) {
     const glyphs = {};
     for (const [ch, list] of Object.entries(p.glyphs)) {
-      glyphs[ch] = list.map((g) => ({ w: g.width, h: g.height, b: +g.baseline.toFixed(2), tb: +g.templateBaseline.toFixed(2), il: g.inkLeft, ir: g.inkRight, it: g.inkTop, ib: g.inkBottom, png: g.png || (g.png = alphaToPng(g)) }));
+      const real = list.filter((g) => !g.synthetic);
+      if (!real.length) continue;
+      glyphs[ch] = real.map((g) => ({ w: g.width, h: g.height, b: +g.baseline.toFixed(2), tb: +g.templateBaseline.toFixed(2), il: g.inkLeft, ir: g.inkRight, it: g.inkTop, ib: g.inkBottom, png: g.png || (g.png = alphaToPng(g)) }));
     }
-    return { v: 1, name: p.name, created: p.created || new Date().toISOString(), pxPerMm: p.pxPerMm, xHeightPx: p.xHeightPx, capHeightPx: p.capHeightPx, missing: p.missing || [], glyphs };
+    return { v: 1, name: p.name, created: p.created || new Date().toISOString(), pxPerMm: p.pxPerMm, xHeightPx: p.xHeightPx, capHeightPx: p.capHeightPx, missing: p.missing || [], style: p.style || DEFAULT_STYLE, review: p.review || null, glyphs };
   }
 
   function tinted(p, g, ink) {
@@ -1221,7 +1453,7 @@ const TEMPLATE_PDF_B64 = "JVBERi0xLjMKJZOMi54gUmVwb3J0TGFiIEdlbmVyYXRlZCBQREYgZG
     const list = $("sheet-list");
     if (!p) { list.textContent = ""; $("sheet-meta").textContent = "Diese Handschrift konnte nicht geladen werden."; return; }
     const text = $("text").value.trim() ? $("text").value : " ";
-    const layout = new HS.Layout(p, { paper: state.paper, size: state.size, jitter: state.jitter, seed: state.seed }).pages(text);
+    const layout = new HS.Layout(p, layoutOptions(p)).pages(text);
     lastLayout = { layout, profile: p, ink: state.ink };
     const shown = layout.pages.slice(0, 4);
     while (list.children.length > shown.length) list.lastChild.remove();
@@ -1259,9 +1491,9 @@ const TEMPLATE_PDF_B64 = "JVBERi0xLjMKJZOMi54gUmVwb3J0TGFiIEdlbmVyYXRlZCBQREYgZG
     }
   }
 
-  function drawPage(canvas, paper, items, p, ink) {
-    const cssW = canvas.parentNode.clientWidth || 600, dpr = Math.min(2, window.devicePixelRatio || 1);
-    const W = Math.round(cssW * dpr), H = Math.round(W * HS.PAGE_H / HS.PAGE_W), s = W / HS.PAGE_W;
+  function drawPage(canvas, paper, items, p, ink, widthPx) {
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    const W = widthPx || Math.round((canvas.parentNode.clientWidth || 600) * dpr), H = Math.round(W * HS.PAGE_H / HS.PAGE_W), s = W / HS.PAGE_W;
     canvas.width = W; canvas.height = H;
     const ctx = canvas.getContext("2d");
     drawPaperCanvas(ctx, paper, s);
@@ -1361,9 +1593,11 @@ const TEMPLATE_PDF_B64 = "JVBERi0xLjMKJZOMi54gUmVwb3J0TGFiIEdlbmVyYXRlZCBQREYgZG
         const det = HS.detectPage(gray);
         await tick();
         const res = HS.extractPage(gray, det);
+        const again = state.learn.pages.some((q) => q.page === res.page);
         state.learn.pages.push(res);
         status.className = res.glyphs.length > 70 ? "status-ok" : "status-err";
-        status.textContent = `Seite ${res.page + 1}: ${res.glyphs.length} von ${HS.CHARSET.length} Zeichen erkannt` + (res.empty.length ? ` · leer: ${res.empty.join(" ")}` : "");
+        status.textContent = `Seite ${res.page + 1}: ${res.glyphs.length} von ${HS.CHARSET.length} Zeichen erkannt` + (res.empty.length ? ` · leer: ${res.empty.join(" ")}` : "") +
+          (again ? ` · Seite ${res.page + 1} war schon dabei. Für mehr Abwechslung Seite 2 und 3 der Vorlage ausfüllen.` : "");
         card.appendChild(controlImage(res));
         res.rectified = null; // free memory
       } catch (e) {
@@ -1373,6 +1607,34 @@ const TEMPLATE_PDF_B64 = "JVBERi0xLjMKJZOMi54gUmVwb3J0TGFiIEdlbmVyYXRlZCBQREYgZG
       await tick();
     }
     updateLearnResult();
+    await runLearnReview();
+  }
+
+  async function runLearnReview() {
+    const prof = state.learn.profile;
+    const box = $("ai-review");
+    if (!prof) return;
+    if (!AI.ready) { box.hidden = true; return; }
+    box.hidden = false;
+    box.textContent = "Claude prüft die erkannten Zeichen …";
+    $("save-profile").disabled = true;
+    try {
+      const bad = await reviewGlyphs(prof, (pct) => { box.textContent = `Claude prüft die erkannten Zeichen … ${pct} %`; });
+      if (state.learn.profile !== prof) return;
+      const r = applyReview(prof, bad);
+      box.textContent = reviewText(r);
+      showLearnSummary(prof);
+      drawOverview(prof);
+    } catch (e) {
+      box.textContent = aiErrorText(e);
+    } finally {
+      $("save-profile").disabled = false;
+    }
+  }
+
+  function showLearnSummary(prof) {
+    const n = Object.keys(prof.glyphs).length, v = Object.values(prof.glyphs).reduce((a, l) => a + l.filter((g) => !g.synthetic).length, 0);
+    $("learn-summary").textContent = `${n} von ${HS.CHARSET.length} Zeichen gelernt (${v} Varianten).` + (prof.missing.length ? ` Fehlt noch: ${prof.missing.join(" ")}` : " Alles vollständig.");
   }
 
   function updateLearnResult() {
@@ -1385,11 +1647,11 @@ const TEMPLATE_PDF_B64 = "JVBERi0xLjMKJZOMi54gUmVwb3J0TGFiIEdlbmVyYXRlZCBQREYgZG
     }
     const prof = HS.buildProfile(lists, target ? target.name : ($("new-name").value.trim() || "Meine Handschrift"));
     for (const vs of Object.values(prof.glyphs)) vs.forEach((g) => { if (!g.profileL) HS.glyphProfiles(g); });
-    prof.id = "learn"; prof.tinted = {};
+    prof.id = "learn"; prof.tinted = {}; prof.style = Object.assign({}, DEFAULT_STYLE, target && target.style);
     state.learn.profile = prof;
     $("step-result").hidden = false;
-    const n = Object.keys(prof.glyphs).length, v = Object.values(prof.glyphs).reduce((a, l) => a + l.length, 0);
-    $("learn-summary").textContent = `${n} von ${HS.CHARSET.length} Zeichen gelernt (${v} Varianten).` + (prof.missing.length ? ` Fehlt noch: ${prof.missing.join(" ")}` : " Alles vollständig.");
+    $("ai-review").hidden = true;
+    showLearnSummary(prof);
     drawOverview(prof);
   }
 
@@ -1405,9 +1667,9 @@ const TEMPLATE_PDF_B64 = "JVBERi0xLjMKJZOMi54gUmVwb3J0TGFiIEdlbmVyYXRlZCBQREYgZG
       ctx.fillStyle = "#c33"; ctx.font = "11px sans-serif"; ctx.fillText(ch, x0 + 4, y0 + 12);
       const g = p.glyphs[ch] && p.glyphs[ch][0];
       if (!g) return;
-      const t = tinted(p, g, "dunkelblau");
-      const w = g.width * k, h = g.height * k;
-      ctx.drawImage(t.canvas, x0 + (cell - w) / 2, base - g.baseline * k, w, h);
+      const t = tinted(p, g, "dunkelblau"), kk = k * (g.scale || 1);
+      const w = g.width * kk, h = g.height * kk;
+      ctx.drawImage(t.canvas, x0 + (cell - w) / 2, base - g.baseline * kk, w, h);
     });
   }
 
@@ -1431,11 +1693,218 @@ const TEMPLATE_PDF_B64 = "JVBERi0xLjMKJZOMi54gUmVwb3J0TGFiIEdlbmVyYXRlZCBQREYgZG
       renderProfiles();
       toast(where === "shared" ? `„${name}“ gespeichert.` : `„${name}“ gespeichert – nur auf diesem Gerät.`);
       showTab("write");
-      scheduleRender();
+      await renderPreview();
+      if (AI.ready) checkPageWithAi(false);
     } catch (e) {
       toast(e.message || "Speichern fehlgeschlagen.");
     } finally {
       $("save-profile").disabled = false; $("save-hint").textContent = "";
+    }
+  }
+
+  function layoutOptions(p) {
+    const st = p.style || DEFAULT_STYLE;
+    return {
+      paper: state.paper, seed: state.seed, size: state.size * st.size, jitter: state.jitter * st.jitter,
+      letterSpacing: st.letterSpacing, wordSpacing: st.wordSpacing,
+    };
+  }
+
+  // ------------------------------------------------------------ AI review
+  // Claude looks at (1) every cut-out character and (2) the finished page.
+  // Everything here is optional: without the capability the app works as before.
+  const AI = {
+    sample: null, images: false, maxImages: 1, off: false,
+    async init() {
+      if (!(window.claude && typeof window.claude.use === "function")) return;
+      try { this.sample = await window.claude.use("sample"); } catch (e) { this.sample = null; }
+      if (!this.sample) return;
+      try {
+        const lim = await this.sample.limits();
+        this.images = !!lim.images;
+        this.maxImages = Math.max(1, Math.min(4, (lim.images && lim.images.maxCount) || 1));
+      } catch (e) { this.images = false; }
+    },
+    get ready() { return !!(this.sample && this.images && !this.off); },
+    async json(prompt, images) {
+      try {
+        return await this.sample.json(prompt, { images, modelTier: "default" });
+      } catch (e) {
+        if (["not_granted", "sampling_disabled", "not_declared", "capability_disabled", "capability_removed", "images_unavailable"].includes(e && e.code)) {
+          this.off = true;
+          updateAiUi();
+        }
+        throw e;
+      }
+    },
+  };
+  function aiErrorText(e) {
+    const c = e && e.code;
+    if (c === "not_granted") return "KI-Prüfung nicht erlaubt – die App funktioniert trotzdem.";
+    if (c === "rate_limited") return "KI gerade ausgelastet. Später nochmal versuchen.";
+    if (c === "invalid_json") return "Die KI-Antwort war unverständlich. Nochmal versuchen.";
+    return "KI-Prüfung nicht möglich (" + (c || "Fehler") + ").";
+  }
+  function updateAiUi() {
+    $("ai-box").hidden = !AI.ready;
+  }
+  const toBlob = (canvas) => new Promise((r) => canvas.toBlob(r, "image/png"));
+
+  /** Contact sheets: numbered cells, expected character in red, handwriting in blue. */
+  function glyphSheets(p) {
+    const cells = [];
+    for (const ch of Object.keys(p.glyphs)) for (const g of p.glyphs[ch]) if (!g.synthetic) cells.push({ ch, g });
+    const per = 48, cols = 8, cw = 150, chh = 150, sheets = [];
+    let allH = 0;
+    for (const c of cells) allH = Math.max(allH, c.g.height * (c.g.scale || 1));
+    for (let i = 0; i < cells.length; i += per) {
+      const part = cells.slice(i, i + per), rows = Math.ceil(part.length / cols);
+      const cv = document.createElement("canvas"); cv.width = cols * cw; cv.height = rows * chh;
+      const ctx = cv.getContext("2d");
+      ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, cv.width, cv.height);
+      part.forEach((c, j) => {
+        const id = i + j + 1, x0 = (j % cols) * cw, y0 = Math.floor(j / cols) * chh;
+        ctx.strokeStyle = "#d5dbe6"; ctx.strokeRect(x0 + 0.5, y0 + 0.5, cw - 1, chh - 1);
+        ctx.fillStyle = "#c62828"; ctx.font = "bold 17px sans-serif"; ctx.fillText(`${id}: ${c.ch}`, x0 + 6, y0 + 20);
+        const g = c.g, k = Math.min((chh - 34) / g.height, (cw - 16) / g.width, 1.6);
+        const t = tinted(p, g, "dunkelblau");
+        ctx.drawImage(t.canvas, x0 + (cw - g.width * k) / 2, y0 + 28 + (chh - 34 - g.height * k) / 2, g.width * k, g.height * k);
+        c.id = id;
+      });
+      sheets.push({ canvas: cv, first: i + 1, last: i + part.length });
+    }
+    return { cells, sheets };
+  }
+
+  /** Ask Claude which cut-out characters are broken. Returns [{cell, reason}]. */
+  async function reviewGlyphs(p, onProgress) {
+    const { cells, sheets } = glyphSheets(p);
+    const bad = [];
+    for (let i = 0; i < sheets.length; i += AI.maxImages) {
+      const batch = sheets.slice(i, i + AI.maxImages);
+      onProgress && onProgress(Math.round((i / sheets.length) * 100));
+      const blobs = await Promise.all(batch.map((b) => toBlob(b.canvas)));
+      const prompt =
+        "Du prüfst handgeschriebene Zeichen, die automatisch aus einer ausgefüllten Schreibvorlage ausgeschnitten wurden " +
+        "(Zellen " + batch[0].first + " bis " + batch[batch.length - 1].last + "). In jeder Zelle steht oben links in Rot " +
+        "eine Nummer und das Zeichen, das dort stehen SOLL, darunter die ausgeschnittene Handschrift in Blau.\n\n" +
+        "Markiere nur Zellen, bei denen die Handschrift eindeutig unbrauchbar ist:\n" +
+        "- zeigt ein anderes Zeichen als das Soll-Zeichen (z. B. 'b' statt 'd'),\n" +
+        "- ist abgeschnitten oder unvollständig,\n" +
+        "- enthält fremde Striche (Rahmenreste, Teile von Nachbarzeichen, Flecken, Schatten),\n" +
+        "- ist durchgestrichen oder unleserlich.\n" +
+        "Persönliche Schreibweisen (ungewöhnliche Formen, Schnörkel, Schräglage, Größe) sind KEIN Fehler. " +
+        "Groß-/Kleinschreibung bei gleich aussehenden Zeichen (o/O, s/S, x/X, 0/O, l/I) ist KEIN Fehler.\n\n" +
+        'Antworte nur mit JSON: {"bad": [{"id": 12, "reason": "kurzer Grund auf Deutsch"}]}. Wenn alles in Ordnung ist: {"bad": []}';
+      const res = await AI.json(prompt, blobs);
+      for (const b of (res && Array.isArray(res.bad) ? res.bad : [])) {
+        const cell = cells.find((c) => c.id === Number(b.id));
+        if (cell) bad.push({ cell, reason: String(b.reason || "").slice(0, 120) });
+      }
+    }
+    return bad;
+  }
+
+  /** Remove broken variants (never the last one of a character). */
+  function applyReview(p, bad) {
+    const removed = [], doubtful = [];
+    for (const { cell, reason } of bad) {
+      const list = p.glyphs[cell.ch];
+      if (!list) continue;
+      const otherReal = list.filter((g) => !g.synthetic && g !== cell.g);
+      if (otherReal.length) {
+        // drop the bad variant and the variations generated from it
+        p.glyphs[cell.ch] = list.filter((g) => g !== cell.g && g.derivedFrom !== cell.g);
+        removed.push({ ch: cell.ch, reason });
+      } else doubtful.push({ ch: cell.ch, reason });
+    }
+    HS.normalizeProfile(p);
+    p.tinted = {};
+    p.review = { at: new Date().toISOString(), removed: removed.length, doubtful: doubtful.map((d) => d.ch) };
+    return { removed, doubtful };
+  }
+
+  function reviewText(r) {
+    const parts = [];
+    if (!r.removed.length && !r.doubtful.length) return "KI-Prüfung: alle Zeichen sehen gut aus.";
+    if (r.removed.length) parts.push(`${r.removed.length} misslungene Variante(n) aussortiert (${r.removed.slice(0, 6).map((x) => `„${x.ch}“: ${x.reason}`).join("; ")}${r.removed.length > 6 ? " …" : ""})`);
+    if (r.doubtful.length) parts.push(`Bitte nochmal schreiben: ${r.doubtful.map((x) => x.ch).join(" ")} (${r.doubtful.slice(0, 3).map((x) => x.reason).join("; ")})`);
+    return "KI-Prüfung: " + parts.join(". ") + ".";
+  }
+
+  /** Render page 1 off-screen and let Claude judge it; returns the new style or null. */
+  async function reviewPage(p, items, paper) {
+    const cv = document.createElement("canvas");
+    drawPage(cv, paper, items, p, state.ink, 1000);
+    const blob = await toBlob(cv);
+    const st = p.style || DEFAULT_STYLE;
+    const prompt =
+      "Das Bild zeigt eine automatisch erzeugte Seite: Text in der Handschrift einer echten Person, Buchstabe für Buchstabe " +
+      "aus ihrer Schriftprobe zusammengesetzt, auf liniertem DIN-A4-Papier. Ziel: Die Seite soll aussehen wie echt und " +
+      "ordentlich von dieser Person von Hand geschrieben – gut lesbar, natürlich, aber nicht wie eine Computerschrift.\n\n" +
+      "Achte auf: Buchstabenabstände innerhalb der Wörter (zu weit = Wörter zerfallen, zu eng = Buchstaben kleben), " +
+      "Wortabstände, Größe der Schrift im Verhältnis zu den Linien, ob die Buchstaben auf der Linie sitzen, " +
+      "ob die Schrift zu unruhig oder zu gleichförmig wirkt, und einzelne Zeichen, die kaputt oder falsch aussehen.\n\n" +
+      `Aktuelle Faktoren (1 = Standard): letterSpacing ${st.letterSpacing.toFixed(2)}, wordSpacing ${st.wordSpacing.toFixed(2)}, ` +
+      `size ${st.size.toFixed(2)}, jitter ${st.jitter.toFixed(2)}. Schlage die NEUEN Werte vor (gleich lassen, wenn es passt).\n\n` +
+      'Antworte nur mit JSON: {"score": 1-10, "letterSpacing": 0.5-1.6, "wordSpacing": 0.6-1.6, "size": 0.8-1.25, ' +
+      '"jitter": 0.4-1.4, "badChars": ["Zeichen, die falsch oder kaputt aussehen"], "notes": "ein bis zwei kurze Sätze auf Deutsch"}';
+    const r = await AI.json(prompt, [blob]);
+    if (!r || typeof r !== "object") return null;
+    const step = (cur, v, lo, hi) => {
+      const n = Number(v);
+      if (!isFinite(n)) return cur;
+      const t = Math.min(hi, Math.max(lo, n));
+      return Math.min(cur * 1.3, Math.max(cur / 1.3, t)); // at most 30 % per check
+    };
+    return {
+      style: {
+        letterSpacing: step(st.letterSpacing, r.letterSpacing, 0.5, 1.6),
+        wordSpacing: step(st.wordSpacing, r.wordSpacing, 0.6, 1.6),
+        size: step(st.size, r.size, 0.8, 1.25),
+        jitter: step(st.jitter, r.jitter, 0.4, 1.4),
+      },
+      score: Number(r.score) || null,
+      notes: String(r.notes || "").slice(0, 300),
+      badChars: Array.isArray(r.badChars) ? r.badChars.map(String).filter((c) => c.length === 1).slice(0, 12) : [],
+    };
+  }
+
+  async function persistProfile(p) {
+    const entry = state.profiles.get(p.id);
+    if (!entry || entry.source === "demo") return;
+    const stored = dehydrate(p);
+    const where = await Store.save(p.id, stored);
+    if (where !== entry.source && where === "local") entry.source = "local";
+    entry.meta = summary(stored);
+  }
+
+  let pageCheckKey = null;
+  async function checkPageWithAi(silent) {
+    if (!AI.ready || !lastLayout) return false;
+    const { profile: p, layout } = lastLayout;
+    const key = [p.id, state.paper, state.size, state.jitter, $("text").value.length, JSON.stringify(p.style)].join("|");
+    if (silent && key === pageCheckKey) return false;
+    $("ai-note").textContent = "Claude schaut sich das Blatt an …";
+    $("ai-check").disabled = true;
+    try {
+      const r = await reviewPage(p, layout.pages[0], layout.paper);
+      if (!r) return false;
+      const changed = Object.keys(r.style).some((k) => Math.abs(r.style[k] - p.style[k]) > 0.02);
+      p.style = r.style;
+      const bad = r.badChars.length ? ` Auffällige Zeichen: ${r.badChars.join(" ")}.` : "";
+      $("ai-note").textContent = `Bewertung ${r.score || "?"}/10. ${r.notes}${bad}` + (changed ? " Abstände/Größe wurden angepasst." : "");
+      if (changed) {
+        await renderPreview();
+        persistProfile(p).catch(() => {});
+      }
+      pageCheckKey = [p.id, state.paper, state.size, state.jitter, $("text").value.length, JSON.stringify(p.style)].join("|");
+      return changed;
+    } catch (e) {
+      $("ai-note").textContent = aiErrorText(e);
+      return false;
+    } finally {
+      $("ai-check").disabled = false;
     }
   }
 
@@ -1477,6 +1946,21 @@ const TEMPLATE_PDF_B64 = "JVBERi0xLjMKJZOMi54gUmVwb3J0TGFiIEdlbmVyYXRlZCBQREYgZG
         await offerFile(`handschrift-${e.name.replace(/[^\wäöüÄÖÜß-]+/g, "_")}.json`, new Blob([JSON.stringify(stored)], { type: "application/json" }));
       };
       actions.append(use, exp);
+      if (e.source !== "demo" && AI.ready) {
+        const rev = document.createElement("button"); rev.className = "btn"; rev.type = "button"; rev.textContent = "Mit KI prüfen";
+        rev.onclick = async () => {
+          rev.disabled = true; rev.textContent = "Claude prüft …";
+          try {
+            const p = await getProfile(e.id);
+            const r = applyReview(p, await reviewGlyphs(p, (pct) => { rev.textContent = `Claude prüft … ${pct} %`; }));
+            await persistProfile(p);
+            toast(reviewText(r));
+            scheduleRender();
+          } catch (err) { toast(aiErrorText(err)); }
+          finally { renderProfiles(); }
+        };
+        actions.append(rev);
+      }
       if (e.source !== "demo") {
         const del = document.createElement("button"); del.className = "btn danger"; del.type = "button"; del.textContent = "Löschen";
         del.onclick = () => {
@@ -1569,6 +2053,7 @@ const TEMPLATE_PDF_B64 = "JVBERi0xLjMKJZOMi54gUmVwb3J0TGFiIEdlbmVyYXRlZCBQREYgZG
       if (!lastLayout) return;
       $("save-pdf").disabled = true;
       try {
+        if (AI.ready) await checkPageWithAi(true);
         await tick();
         const blob = buildPdf();
         const name = lastLayout.profile.name.replace(/[^\wäöüÄÖÜß-]+/g, "_");
@@ -1598,7 +2083,9 @@ const TEMPLATE_PDF_B64 = "JVBERi0xLjMKJZOMi54gUmVwb3J0TGFiIEdlbmVyYXRlZCBQREYgZG
 
     renderProfiles();
     renderPreview();
+    $("ai-check").onclick = () => checkPageWithAi(false);
     Store.init().then(() => { if (state.activeId !== "demo") scheduleRender(); });
+    AI.init().then(() => { updateAiUi(); renderProfiles(); });
   }
 
   init();

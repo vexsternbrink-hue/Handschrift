@@ -1,24 +1,24 @@
 # Overnight-Build – Bericht
 
-* Start: 2026-10-06 20:05:55
-* Ende: 2026-10-06 20:07:38
+* Start: 2026-10-07 16:43:55
+* Ende: 2026-10-07 16:45:27
 * Ergebnis: **ALLES OK**
-* Ausführliches Log: `/home/user/Handschrift/logs/overnight_20261006_200555.log`
+* Ausführliches Log: `/home/user/Handschrift/logs/overnight_20261007_164355.log`
 
 | Schritt | Status | Dauer |
 |---|---|---|
-| Umgebung prüfen | ✅ OK | 0.1 s |
-| Template erzeugen | ✅ OK | 0.2 s |
-| Demo-Nutzer 'demo': Foto simulieren + trainieren | ✅ OK | 17.5 s |
-| Demo-Nutzer 'demo2': Foto simulieren + trainieren | ✅ OK | 14.5 s |
-| Beispiel-PDFs + Schriftart erzeugen | ✅ OK | 2.2 s |
-| Stabilitätstest (25 Renderings) | ✅ OK | 34.0 s |
-| Automatische Tests (pytest) | ✅ OK | 34.1 s |
+| Umgebung prüfen | ✅ OK | 8.2 s |
+| Template erzeugen | ✅ OK | 2.3 s |
+| Demo-Nutzer 'demo': Foto simulieren + trainieren | ✅ OK | 13.7 s |
+| Demo-Nutzer 'demo2': Foto simulieren + trainieren | ✅ OK | 9.9 s |
+| Beispiel-PDFs + Schriftart erzeugen | ✅ OK | 2.1 s |
+| Stabilitätstest (25 Renderings) | ✅ OK | 23.1 s |
+| Automatische Tests (pytest) | ✅ OK | 32.2 s |
 | Beispiele nach examples/ kopieren | ✅ OK | 0.2 s |
 
 ## Umgebung prüfen
 - Python: 3.13.16
-- System: Linux 6.18.44-fc-v70
+- System: Linux 6.18.44-fc-v77
 - numpy: 2.5.3
 - opencv-python-headless: 5.0.0.93
 - Pillow: 12.3.0
@@ -52,7 +52,7 @@
 - 25 zufällige Renderings (verschiedene Nutzer, Papier, Farben, Größen) – alle gültig
 
 ## Automatische Tests (pytest)
-- pytest: 33 passed in 33.62s
+- pytest: 34 passed in 30.00s
 
 ## Beispiele nach examples/ kopieren
 - examples/beispiel_vorlage_ausgefuellt.pdf (simuliert ausgefülltes Template)

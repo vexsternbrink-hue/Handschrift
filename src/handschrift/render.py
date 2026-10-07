@@ -31,7 +31,8 @@ INK_COLORS = {
 }
 DEFAULT_LINE_SPACING = {"liniert": 8.5, "kariert": 10.0, "blanko": 8.5}
 BASE_X_HEIGHT_MM = 2.9
-CAP_RATIO = 0.62  # max. capital height relative to the line spacing
+MIN_X_HEIGHT_MM, MAX_X_HEIGHT_MM = 2.5, 3.5
+CAP_RATIO = 0.64  # max. capital height relative to the line spacing
 KERN_STEP_MM = 0.08
 
 
@@ -99,7 +100,11 @@ class Renderer:
         spacing = self.paper.line_spacing
         # writing size: a natural x-height, but capitals must leave room for
         # the descenders of the line above
-        k = min(BASE_X_HEIGHT_MM / glyphs.x_height_px, CAP_RATIO * spacing / glyphs.cap_height_px)
+        # the person's own writing size (measured on the template), within what
+        # looks right on school paper
+        natural = glyphs.x_height_px / glyphs.px_per_mm
+        xh_mm = min(MAX_X_HEIGHT_MM, max(MIN_X_HEIGHT_MM, natural or BASE_X_HEIGHT_MM))
+        k = min(xh_mm / glyphs.x_height_px, CAP_RATIO * spacing / glyphs.cap_height_px)
         k = min(k * options.size, 0.45 * spacing / glyphs.x_height_px)
         self.k = k  # mm per glyph pixel
         self.x_height = glyphs.x_height_px * k
@@ -135,7 +140,7 @@ class Renderer:
                 self.missing[ch] = self.missing.get(ch, 0) + 1
             for c in sub:
                 rec = self._pick(c)
-                k = self.k * (1.0 + max(-0.08, min(0.08, self._n(0.03))))
+                k = self.k * rec.scale * (1.0 + max(-0.08, min(0.08, self._n(0.03))))
                 if glyphs:
                     x = self._next_x(glyphs[-1], rec, k, x)
                 glyphs.append(_Glyph(rec, x, k, self._n(0.07), self._n(1.2), 1.0 - abs(self._n(0.05))))
@@ -165,13 +170,13 @@ class Renderer:
         return out
 
     def _next_x(self, prev: _Glyph, rec: GlyphRecord, k: float, x_after_prev: float) -> float:
-        gap = self.x_height * max(0.08, 0.2 + self._n(0.04))
+        gap = self.x_height * max(0.05, 0.15 + self._n(0.035))
         bbox_x = x_after_prev + gap
         ys = np.arange(-4.0 * self.x_height, 2.0 * self.x_height, KERN_STEP_MM)
         right_a = prev.x + self._sample(prev.rec, prev.k, ys, 1)
         left_b = self._sample(rec, k, ys, 0)
         # look a little above/below as well so diagonal strokes don't touch
-        reach = int(round(0.3 * self.x_height / KERN_STEP_MM))
+        reach = int(round(0.18 * self.x_height / KERN_STEP_MM))
         ra = np.where(np.isnan(right_a), -np.inf, right_a)
         lb = np.where(np.isnan(left_b), np.inf, left_b)
         ra_grown = ra.copy()
@@ -183,6 +188,9 @@ class Renderer:
         if need.size == 0:
             return bbox_x
         x = float(need.max()) + gap
+        # letters may tuck into each other like real handwriting; punctuation keeps its distance
+        if not (prev.rec.char.isalnum() and rec.char.isalnum()):
+            return max(x, x_after_prev + gap)
         # never tuck in by more than 40 % of the narrower letter
         min_w = min(prev.rec.ink_width * prev.k, rec.ink_width * k)
         return max(x, x_after_prev - 0.4 * min_w)

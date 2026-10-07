@@ -13,17 +13,6 @@ EXTRA = "/+&%€="
 
 CHARSET: list[str] = list(UPPER + LOWER + UMLAUTS + DIGITS + PUNCTUATION + EXTRA)
 
-# Characters whose lowest ink point sits on the baseline. For these, the ink
-# bottom *is* the baseline, which compensates for people not hitting the
-# printed guide line exactly. All other characters (descenders like g/j/p/q/y,
-# floating marks like - ' " “) are positioned relative to the printed baseline.
-BASELINE_CHARS = set(
-    "ABCDEFGHIKLMNOPRSTUVWXYZ" "abcdehiklmnorstuvwxz" "ÄÖÜäöü" + DIGITS + ".!?:&%€"
-)
-# Used to measure the user's writing size.
-XHEIGHT_CHARS = "acemnorsuvwxz"
-CAPHEIGHT_CHARS = "ABDEFHIKLMNPRTUVWXZ"
-
 # Typographic look-alikes that are mapped onto template characters.
 _REPLACEMENTS = {
     "’": "'", "‘": "'", "‚": ",", "´": "'", "`": "'",

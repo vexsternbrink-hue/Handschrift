@@ -23,9 +23,9 @@ import numpy as np
 from PIL import Image
 
 from . import layout
-from .charset import BASELINE_CHARS, CAPHEIGHT_CHARS, CHARSET, XHEIGHT_CHARS, glyph_filename
+from .charset import CHARSET, glyph_filename
 from .config import GLYPH_PX_PER_MM, HandschriftError
-from .glyphs import GlyphRecord, GlyphSet, overview_sheet
+from .glyphs import GlyphRecord, GlyphSet, normalize, overview_sheet
 from .imageio import expand_inputs, load_pages
 from .template import aruco_dictionary
 from .users import UserProfile, now_iso, write_json_atomic
@@ -41,7 +41,8 @@ FAINT_LEVEL = 0.52
 ALPHA_WHITE = 0.90  # brightness that maps to alpha 0
 ALPHA_BLACK = 0.30  # brightness that maps to alpha 1
 MIN_COMPONENT_PX = 10
-MIN_GLYPH_INK_MM2 = 0.35
+MIN_GLYPH_INK_MM2 = 0.1  # small marks like a full stop count, faint specks don't (see DARK_ENOUGH)
+DARK_ENOUGH = 0.5
 SNAP_SEARCH_MM = 3.0
 
 
@@ -238,6 +239,7 @@ def extract_box(norm: np.ndarray, slot: layout.Slot, dx: float, dy: float, sourc
     ink = (crop < INK_THRESHOLD).astype(np.uint8)
     n, labels, stats, _ = cv2.connectedComponentsWithStats(ink, connectivity=8)
     keep = np.zeros(n, bool)
+    darkest = 1.0
     ch, cw = crop.shape
     thin = 0.7 * PPM
     for i in range(1, n):
@@ -251,8 +253,9 @@ def extract_box(norm: np.ndarray, slot: layout.Slot, dx: float, dy: float, sourc
         if touches and (w <= thin or h <= thin) and max(w, h) > 3 * PPM:
             continue  # remainder of the printed box outline
         keep[i] = True
+        darkest = min(darkest, comp_min)
     mask = keep[labels]
-    if mask.sum() < MIN_GLYPH_INK_MM2 * PPM * PPM:
+    if mask.sum() < MIN_GLYPH_INK_MM2 * PPM * PPM or darkest > DARK_ENOUGH:
         return None
 
     alpha = np.clip((ALPHA_WHITE - crop) / (ALPHA_WHITE - ALPHA_BLACK), 0.0, 1.0)
@@ -326,25 +329,6 @@ def _write_debug(flat: np.ndarray, boxes, path: Path) -> Path:
 # 3. assemble the glyph set
 # --------------------------------------------------------------------------
 
-def _baselines(records: list[GlyphRecord]) -> None:
-    """Use the ink bottom as baseline for characters that sit on the line,
-    and the printed guide (corrected by the user's typical offset) for the rest."""
-    offsets = [r.ink_bottom - r.template_baseline for r in records if r.char in BASELINE_CHARS]
-    offset = float(np.median(offsets)) if offsets else 0.0
-    offset = float(np.clip(offset, -3 * PPM, 3 * PPM))
-    for r in records:
-        guide = r.template_baseline + offset
-        if r.char in BASELINE_CHARS and abs(r.ink_bottom - guide) < 3.5 * PPM:
-            r.baseline = float(r.ink_bottom)
-        else:
-            r.baseline = float(guide)
-
-
-def _median_height(records: list[GlyphRecord], chars: str) -> float | None:
-    hs = [r.baseline - r.ink_top for r in records if r.char in chars]
-    return float(np.median(hs)) if hs else None
-
-
 def train_user(
     profile: UserProfile, inputs: list[Path] | None = None, append: bool = False
 ) -> TrainReport:
@@ -414,22 +398,17 @@ def train_user(
             )
 
     flat = [r for recs in records.values() for r in recs]
-    _baselines(flat)
-    xh = _median_height(flat, XHEIGHT_CHARS)
-    cap = _median_height(flat, CAPHEIGHT_CHARS)
-    if xh is None and cap is None:
-        xh, cap = 5.0 * PPM, 8.0 * PPM
-    elif xh is None:
-        xh = cap * 0.62
-    elif cap is None:
-        cap = xh / 0.62
 
     ordered = {ch: records[ch] for ch in CHARSET if ch in records}
     ordered.update({ch: v for ch, v in records.items() if ch not in ordered})
     gs = GlyphSet(
-        directory=hw, px_per_mm=PPM, x_height_px=xh, cap_height_px=cap, glyphs=ordered,
+        directory=hw, px_per_mm=PPM, x_height_px=0.0, cap_height_px=0.0, glyphs=ordered,
         created=now_iso(), sources=sources, missing=[c for c in CHARSET if c not in ordered],
     )
+    # images are read from the staging folder until the swap below
+    gs._images = {r.file: Image.open(staging / r.file).convert("L") for r in flat}
+    normalize(gs)
+    flat = [r for recs in gs.glyphs.values() for r in recs]
 
     # swap in the new glyph directory and metadata
     final = hw / "glyphs"

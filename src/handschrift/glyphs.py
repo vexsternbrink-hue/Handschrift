@@ -33,6 +33,7 @@ class GlyphRecord:
     template_baseline: float = 0.0  # where the printed guide line was (px)
     source: str = ""
     page_bbox_mm: list[float] = field(default_factory=list)  # ink bbox on the template page
+    scale: float = 1.0  # size correction towards the writer's typical size for this kind of character
 
     @property
     def ink_width(self) -> int:
@@ -98,6 +99,7 @@ class GlyphSet:
         absent = [r.file for recs in gs.glyphs.values() for r in recs if not (gs.glyph_dir / r.file).is_file()]
         if absent:
             raise HandschriftError(f"{len(absent)} Glyph-Dateien fehlen in {gs.glyph_dir} (z. B. {absent[0]}). Bitte neu trainieren.")
+        normalize(gs)  # profiles trained with older versions get the current placement rules
         return gs
 
     # ---------------------------------------------------------------- query
@@ -126,6 +128,115 @@ class GlyphSet:
         return img
 
 
+# ---------------------------------------------------------------------------
+# Tidying the set (same rules as web/core.js).
+# People never write exactly on the printed guide lines, so baselines and sizes
+# are derived from the shapes: a letter that sits on the line has its ink
+# bottom on the baseline, g/p/q/y have their top at the x-height, punctuation
+# goes where it belongs. Sizes are pulled most of the way towards the writer's
+# typical size for that kind of character - personal, but orderly.
+X_CHARS = "acemnorsuvwxz"
+CAP_CLASS = "ABCDEFGHIKLMNOPRSTUVWXYZ"
+ASC_CLASS = "bdhkl"
+DESC_CLASS = "gpqy"
+DIGITS = "0123456789"
+SIZE_PULL, SCALE_MIN, SCALE_MAX = 0.7, 0.72, 1.4
+BASE_OF = {"Ä": "A", "Ö": "O", "Ü": "U", "ä": "a", "ö": "o", "ü": "u", "ß": "b"}
+
+
+def _median(values) -> float | None:
+    values = list(values)
+    return float(np.median(values)) if values else None
+
+
+def _ink_h(r: GlyphRecord) -> float:
+    return float(r.ink_bottom - r.ink_top)
+
+
+def normalize(gs: GlyphSet) -> GlyphSet:
+    """Recompute baseline + scale of every glyph and the size metrics."""
+    char_median: dict[str, float] = {}
+    for ch, recs in list(gs.glyphs.items()):
+        # identical copies (same page uploaded twice) add no variety
+        unique, seen = [], set()
+        for r in recs:
+            key = (r.width, r.height, np.asarray(gs.alpha(r)).tobytes()[::7])
+            if key not in seen:
+                seen.add(key)
+                unique.append(r)
+        # drop variants that are wildly off in size (a slip, a cut-off stroke)
+        if len(unique) > 1:
+            med = _median(_ink_h(r) for r in unique)
+            kept = [r for r in unique if abs(_ink_h(r) / med - 1) <= 0.45]
+            unique = kept or unique
+        gs.glyphs[ch] = unique
+        char_median[ch] = _median(_ink_h(r) for r in unique)
+
+    def class_h(chars: str) -> float | None:
+        return _median(char_median[c] for c in chars if c in char_median)
+
+    xh, cap = class_h(X_CHARS), class_h(CAP_CLASS)
+    if xh is None and cap is None:
+        xh = 4.5 * gs.px_per_mm
+        cap = xh * 1.9
+    elif xh is None:
+        xh = cap * 0.55
+    elif cap is None:
+        cap = xh * 1.9
+    asc = class_h(ASC_CLASS) or cap
+    dig = class_h(DIGITS) or cap
+    desc = class_h(DESC_CLASS) or xh * 1.7
+
+    def target(c: str) -> float | None:
+        for chars, value in ((X_CHARS, xh), (CAP_CLASS, cap), (ASC_CLASS, asc), (DIGITS, dig), (DESC_CLASS, desc)):
+            if c in chars:
+                return value
+        return None
+
+    def clamp(v: float) -> float:
+        return min(SCALE_MAX, max(SCALE_MIN, v))
+
+    char_scale = {ch: (clamp((target(ch) / char_median[ch]) ** SIZE_PULL) if target(ch) else 1.0) for ch in gs.glyphs}
+    for ch, base in BASE_OF.items():
+        if ch in gs.glyphs and base in char_scale:
+            char_scale[ch] = char_scale[base]
+
+    for ch, recs in gs.glyphs.items():
+        for r in recs:
+            h = max(1.0, _ink_h(r))
+            r.scale = clamp(char_scale[ch] * (char_median[ch] / h) ** 0.5)
+            mid = (r.ink_top + r.ink_bottom) / 2
+            if ch in DESC_CLASS:
+                b = r.ink_top + xh / r.scale
+            elif ch == "Q":
+                b = r.ink_bottom - 0.08 * h
+            elif ch in ",„":
+                b = r.ink_top + 0.22 * xh
+            elif ch == ";":
+                b = r.ink_top + 0.72 * xh
+            elif ch == "-":
+                b = mid + 0.45 * xh
+            elif ch in "+=":
+                b = mid + 0.5 * xh
+            elif ch in "'\"“":
+                b = r.ink_top + cap
+            elif ch in "()/":
+                b = r.ink_bottom - 0.22 * xh
+            else:
+                b = r.ink_bottom
+            r.baseline = float(b)
+    if "j" in gs.glyphs:
+        descents = [(r.ink_bottom - r.baseline) * r.scale for c in DESC_CLASS for r in gs.glyphs.get(c, [])]
+        d = _median(descents) or 0.7 * xh
+        for r in gs.glyphs["j"]:
+            r.baseline = float(r.ink_bottom - d / r.scale)
+    for recs in gs.glyphs.values():
+        for i, r in enumerate(recs):
+            r.variant = i
+    gs.x_height_px, gs.cap_height_px = float(xh), float(cap)
+    return gs
+
+
 def overview_sheet(gs: GlyphSet, path: Path, cell_mm: float = 14.0) -> Path:
     """Draw every learned glyph (all variants) on a grid with its baseline, for checking."""
     from PIL import ImageDraw, ImageFont
@@ -151,8 +262,10 @@ def overview_sheet(gs: GlyphSet, path: Path, cell_mm: float = 14.0) -> Path:
         x = x0 + int(gs.px_per_mm * 2.6)
         for rec in gs.glyphs[ch]:
             a = gs.alpha(rec)
+            if rec.scale != 1.0:
+                a = a.resize((max(1, round(a.width * rec.scale)), max(1, round(a.height * rec.scale))), Image.LANCZOS)
             ink = Image.new("RGB", a.size, (20, 30, 90))
-            top = int(base_y - rec.baseline)
+            top = int(base_y - rec.baseline * rec.scale)
             if x + a.width > x0 + per_char_w - 4:
                 break
             sheet.paste(ink, (x, top), a)

@@ -20,8 +20,6 @@
   const PPM = 10; // rectified pixels per mm
 
   const CHARSET = Array.from("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzÄÖÜäöüß0123456789.,;:!?-()\"'„“/+&%€=");
-  const BASELINE_CHARS = new Set(Array.from("ABCDEFGHIKLMNOPRSTUVWXYZabcdehiklmnorstuvwxzÄÖÜäöü0123456789.!?:&%€"));
-  const XHEIGHT_CHARS = "acemnorsuvwxz", CAPHEIGHT_CHARS = "ABDEFHIKLMNPRTUVWXZ";
 
   // Inner 4x4 bits (row-major, 1 = black) of ArUco DICT_4X4_50 ids 0..47.
   const MARKER_CODES = ["0100101011001101", "1111000001100101", "1100110011010010", "0110011010111001", "1010101101100001", "1000011000110010", "0110000111010001", "0011101100001101", "0000000100100101", "0011000010101001", "0000011001101110", "1110111001011000", "1111000101001000", "1101010111110000", "1101101101001110", "1101100111000001", "1011100110011010", "1001100111111111", "1001001110100001", "1000100101010000", "0111100101110100", "0100111111010100", "0011001100101010", "0010001001111101", "0000000110111000", "0110101110001110", "0101001100011011", "0101101010101011", "1101111011011100", "1100101110010000", "1011101111101010", "1010100001001101", "0110000100110000", "0000111100110100", "1111011101010001", "1111011011010110", "1110011110001010", "1111101100000000", "1111001000001001", "1110001110100101", "1110100011100111", "1101010111010111", "1100110101110011", "1100011101001101", "1101101100010111", "1101000100010100", "1101001011000000", "1011010010011011"];
@@ -429,7 +427,11 @@
         if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
       }
     }
-    if (total < 0.35 * PPM * PPM) return null;
+    // small marks (full stop, i-dot) are kept, but only if they are real pen
+    // ink, not a faint speck of paper texture or a printed guide dot
+    let darkest = 1;
+    for (let l = 1; l <= n; l++) if (keep[l] && minVal[l] < darkest) darkest = minVal[l];
+    if (total < 0.1 * PPM * PPM || darkest > 0.5) return null;
 
     const alpha = new Float32Array(cw * ch), inMask = [];
     for (let y = 0; y < ch; y++) for (let x = 0; x < cw; x++) {
@@ -480,23 +482,235 @@
 
   function median(a) { if (!a.length) return null; const s = [...a].sort((x, y) => x - y), m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; }
 
+  // ------------------------------------------------------- tidying the set
+  // People never write exactly on the printed guide lines, so baselines and
+  // sizes are derived from the shapes themselves: a letter that sits on the
+  // line has its ink bottom on the baseline, g/p/q/y have their top at the
+  // x-height, punctuation goes where it belongs typographically. Sizes are
+  // pulled most of the way (not all the way) towards the writer's own
+  // typical size for that kind of character, so the result stays personal
+  // but looks orderly.
+  const X_CHARS = "acemnorsuvwxz", CAP_CLASS = "ABCDEFGHIKLMNOPRSTUVWXYZ", ASC_CLASS = "bdhkl";
+  const DESC_CLASS = "gpqy", DIGITS = "0123456789";
+  const SIZE_PULL = 0.7, SCALE_MIN = 0.72, SCALE_MAX = 1.4;
+  const BASE_OF = { "Ä": "A", "Ö": "O", "Ü": "U", "ä": "a", "ö": "o", "ü": "u", "ß": "b" };
+
+  function inkHeight(g) { return g.inkBottom - g.inkTop; }
+
+  function sameGlyph(a, b) {
+    if (a.width !== b.width || a.height !== b.height || !a.alpha || !b.alpha) return false;
+    let diff = 0;
+    for (let i = 0; i < a.alpha.length; i += 3) diff += Math.abs(a.alpha[i] - b.alpha[i]);
+    return diff / (a.alpha.length / 3) < 2;
+  }
+
+  /** The separate ink pieces of a glyph (e.g. the two dots of ':'). */
+  function pieces(g) {
+    const mask = new Uint8Array(g.width * g.height);
+    for (let i = 0; i < mask.length; i++) mask[i] = g.alpha[i] > 60 ? 1 : 0;
+    const { labels, n, stats } = components(mask, g.width, g.height);
+    const out = [];
+    for (let l = 1; l <= n; l++) if (stats[l].area >= 3) out.push({ ...stats[l], label: l });
+    return { labels, list: out };
+  }
+
+  function cutPiece(g, piece, labels, char) {
+    const pad = 3, x0 = Math.max(0, piece.x0 - pad), y0 = Math.max(0, piece.y0 - pad);
+    const x1 = Math.min(g.width, piece.x1 + 1 + pad), y1 = Math.min(g.height, piece.y1 + 1 + pad);
+    const w = x1 - x0, h = y1 - y0, alpha = new Uint8Array(w * h);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const i = (y + y0) * g.width + x + x0;
+      // keep anti-aliased edge pixels next to the piece
+      let near = false;
+      for (let dy = -1; dy <= 1 && !near; dy++) for (let dx = -1; dx <= 1; dx++) {
+        const yy = y + y0 + dy, xx = x + x0 + dx;
+        if (yy >= 0 && yy < g.height && xx >= 0 && xx < g.width && labels[yy * g.width + xx] === piece.label) { near = true; break; }
+      }
+      if (near) alpha[y * w + x] = g.alpha[i];
+    }
+    return {
+      char, width: w, height: h, alpha, synthetic: true, templateBaseline: 0,
+      inkLeft: piece.x0 - x0, inkTop: piece.y0 - y0, inkRight: piece.x1 + 1 - x0, inkBottom: piece.y1 + 1 - y0,
+    };
+  }
+
+  /** Overlay two glyph images: `mark` placed with its ink centred at (cx, bottomY) of `base`. */
+  function compose(base, marks, char) {
+    let x0 = 0, y0 = 0, x1 = base.width, y1 = base.height;
+    for (const m of marks) { x0 = Math.min(x0, m.x); y0 = Math.min(y0, m.y); x1 = Math.max(x1, m.x + m.g.width); y1 = Math.max(y1, m.y + m.g.height); }
+    const w = x1 - x0, h = y1 - y0, alpha = new Uint8Array(w * h);
+    const put = (src, ox, oy) => {
+      for (let y = 0; y < src.height; y++) for (let x = 0; x < src.width; x++) {
+        const i = (y + oy - y0) * w + x + ox - x0;
+        alpha[i] = Math.max(alpha[i], src.alpha[y * src.width + x]);
+      }
+    };
+    put(base, 0, 0);
+    let top = base.inkTop - y0;
+    for (const m of marks) { put(m.g, m.x, m.y); top = Math.min(top, m.y - y0 + m.g.inkTop); }
+    return {
+      char, width: w, height: h, alpha, synthetic: true, templateBaseline: 0,
+      inkLeft: base.inkLeft - x0, inkRight: base.inkRight - x0, inkTop: top, inkBottom: base.inkBottom - y0,
+    };
+  }
+
+  /** Fill gaps from the writer's own ink: a full stop from the lower dot of
+   *  ':' or '!', a comma from ';', umlauts from the base letter + i-dots. */
+  function synthesizeMissing(glyphs) {
+    const lowest = (src) => {
+      for (const g of src) {
+        const { labels, list } = pieces(g);
+        if (list.length < 2) continue;
+        const piece = list.reduce((a, b) => (b.y1 > a.y1 ? b : a));
+        if ((piece.x1 - piece.x0) < g.width * 0.9) return cutPiece(g, piece, labels, null);
+      }
+      return null;
+    };
+    if (!glyphs["."]) {
+      const dot = lowest([...(glyphs[":"] || []), ...(glyphs["!"] || []), ...(glyphs["?"] || [])]);
+      if (dot) { dot.char = "."; glyphs["."] = [dot]; }
+    }
+    if (!glyphs[","] && glyphs[";"]) {
+      const c = lowest(glyphs[";"]);
+      if (c) { c.char = ","; glyphs[","] = [c]; }
+    }
+    // i-dot for umlauts
+    let dot = null;
+    for (const g of glyphs.i || []) {
+      const { labels, list } = pieces(g);
+      if (list.length >= 2) { const top = list.reduce((a, b) => (b.y0 < a.y0 ? b : a)); dot = cutPiece(g, top, labels, "dot"); break; }
+    }
+    if (!dot && glyphs["."]) dot = glyphs["."][0];
+    if (dot) {
+      for (const [uml, base] of Object.entries({ "Ä": "A", "Ö": "O", "Ü": "U", "ä": "a", "ö": "o", "ü": "u" })) {
+        if (glyphs[uml] || !glyphs[base]) continue;
+        glyphs[uml] = glyphs[base].map((b) => {
+          const iw = b.inkRight - b.inkLeft, ih = b.inkBottom - b.inkTop;
+          const gapY = Math.max(2, Math.round(ih * (uml === uml.toUpperCase() ? 0.12 : 0.25)));
+          const dw = dot.inkRight - dot.inkLeft, dh = dot.inkBottom - dot.inkTop;
+          const y = b.inkTop - gapY - dh - dot.inkTop;
+          const cx1 = b.inkLeft + iw * 0.32, cx2 = b.inkLeft + iw * 0.68;
+          return compose(b, [
+            { g: dot, x: Math.round(cx1 - dw / 2 - dot.inkLeft), y },
+            { g: dot, x: Math.round(cx2 - dw / 2 - dot.inkLeft), y },
+          ], uml);
+        });
+      }
+    }
+  }
+
+  /** A new variant of a glyph: same letter, slightly different hand movement
+   *  (smooth wobble, a touch of slant and width change). Deterministic per seed. */
+  function warpGlyph(g, seed) {
+    const r = rng(seed), pad = 4, W = g.width + 2 * pad, H = g.height + 2 * pad;
+    const ink = Math.max(8, g.inkBottom - g.inkTop);
+    const amp = ink * 0.022, shear = (r.uniform() - 0.5) * 0.12, sx = 0.94 + r.uniform() * 0.12, rot = (r.uniform() - 0.5) * 0.05;
+    const f1 = 0.8 + r.uniform() * 1.2, f2 = 0.8 + r.uniform() * 1.2, p1 = r.uniform() * 6.28, p2 = r.uniform() * 6.28;
+    const cx = (g.inkLeft + g.inkRight) / 2, by = g.inkBottom; // keep the foot of the letter in place
+    const out = new Uint8Array(W * H), src = image(g.width, g.height, Float32Array.from(g.alpha));
+    const cos = Math.cos(rot), sin = Math.sin(rot);
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      // inverse map: output pixel -> source pixel
+      let u = x - pad - cx, v = y - pad - by;
+      const wu = u + amp * Math.sin((v / ink) * f1 * 6.28 + p1), wv = v + amp * Math.sin((u / ink) * f2 * 6.28 + p2);
+      let a = (cos * wu + sin * wv), b = (-sin * wu + cos * wv);
+      a = (a - shear * b) / sx;
+      const sxp = a + cx, syp = b + by;
+      if (sxp < 0 || syp < 0 || sxp > g.width - 1 || syp > g.height - 1) continue;
+      const v0 = bilinear(src, sxp, syp);
+      out[y * W + x] = v0 > 255 ? 255 : Math.round(v0);
+    }
+    let x0 = W, x1 = -1, y0 = H, y1 = -1;
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (out[y * W + x] > 60) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+    if (x1 < 0) return null;
+    return {
+      char: g.char, width: W, height: H, alpha: out, synthetic: true, templateBaseline: 0,
+      inkLeft: x0, inkRight: x1 + 1, inkTop: y0, inkBottom: y1 + 1,
+    };
+  }
+
+  /** Recompute baseline + scale of every glyph and the profile metrics.
+   *  Works on freshly extracted glyphs and on stored profiles alike. */
+  function normalizeProfile(p) {
+    const glyphs = p.glyphs;
+    synthesizeMissing(glyphs);
+    const charMedian = {};
+    for (const [ch, list] of Object.entries(glyphs)) {
+      // the same page uploaded twice gives identical copies - they add no variety
+      const vs = list.filter((g, i) => !list.slice(0, i).some((o) => sameGlyph(o, g)));
+      glyphs[ch] = vs;
+      // drop variants that are wildly off in size (a slip, a cut-off stroke)
+      if (vs.length > 1) {
+        const med = median(vs.map(inkHeight));
+        const kept = vs.filter((g) => Math.abs(inkHeight(g) / med - 1) <= 0.45);
+        if (kept.length) glyphs[ch] = kept;
+      }
+      charMedian[ch] = median(glyphs[ch].map(inkHeight));
+      // fewer than 3 real variants: add gentle variations of the writer's own letters
+      const real = glyphs[ch].filter((g) => !g.synthetic || g.char === "." || BASE_OF[ch]);
+      if (/[\p{L}\p{N}]/u.test(ch) && real.length && glyphs[ch].length < 3) {
+        for (let k = 0; glyphs[ch].length < 3 && k < 6; k++) {
+          const w = warpGlyph(real[k % real.length], ch.codePointAt(0) * 31 + k * 7 + 1);
+          if (w) { w.derivedFrom = real[k % real.length]; glyphs[ch].push(w); }
+        }
+      }
+      glyphs[ch].forEach((g, i) => { g.variant = i; });
+    }
+    const classH = (chars) => median(Array.from(chars).filter((c) => charMedian[c]).map((c) => charMedian[c]));
+    let xh = classH(X_CHARS), cap = classH(CAP_CLASS);
+    if (xh == null && cap == null) { xh = 4.5 * (p.pxPerMm || PPM); cap = xh * 1.9; }
+    else if (xh == null) xh = cap * 0.55;
+    else if (cap == null) cap = xh * 1.9;
+    const asc = classH(ASC_CLASS) || cap, dig = classH(DIGITS) || cap, desc = classH(DESC_CLASS) || xh * 1.7;
+    const target = (c) => X_CHARS.includes(c) ? xh : CAP_CLASS.includes(c) ? cap : ASC_CLASS.includes(c) ? asc
+      : DIGITS.includes(c) ? dig : DESC_CLASS.includes(c) ? desc : null;
+    const clampS = (v) => Math.min(SCALE_MAX, Math.max(SCALE_MIN, v));
+    const charScale = {};
+    for (const ch of Object.keys(glyphs)) {
+      const t = target(ch);
+      charScale[ch] = t ? clampS(Math.pow(t / charMedian[ch], SIZE_PULL)) : 1;
+    }
+    for (const [ch, base] of Object.entries(BASE_OF)) if (glyphs[ch] && charScale[base]) charScale[ch] = charScale[base];
+
+    for (const [ch, vs] of Object.entries(glyphs)) {
+      for (const g of vs) {
+        // variants of one character are also pulled towards each other
+        const h = Math.max(1, inkHeight(g));
+        g.scale = clampS(charScale[ch] * Math.pow(charMedian[ch] / h, 0.5));
+        const mid = (g.inkTop + g.inkBottom) / 2;
+        let b;
+        if (DESC_CLASS.includes(ch)) b = g.inkTop + xh / g.scale;
+        else if (ch === "Q") b = g.inkBottom - 0.08 * h;
+        else if (ch === "," || ch === "„") b = g.inkTop + 0.22 * xh;
+        else if (ch === ";") b = g.inkTop + 0.72 * xh;
+        else if (ch === "-") b = mid + 0.45 * xh;
+        else if (ch === "+" || ch === "=") b = mid + 0.5 * xh;
+        else if (ch === "'" || ch === '"' || ch === "“") b = g.inkTop + cap;
+        else if (ch === "(" || ch === ")" || ch === "/") b = g.inkBottom - 0.22 * xh;
+        else b = g.inkBottom;
+        g.baseline = b;
+      }
+    }
+    if (glyphs.j) {
+      const descents = [];
+      for (const c of DESC_CLASS) for (const g of glyphs[c] || []) descents.push((g.inkBottom - g.baseline) * g.scale);
+      const d = median(descents) || 0.7 * xh;
+      for (const g of glyphs.j) g.baseline = g.inkBottom - d / g.scale;
+    }
+    for (const vs of Object.values(glyphs)) for (const g of vs) if (!g.profileL && g.alpha) glyphProfiles(g);
+    p.xHeightPx = xh;
+    p.capHeightPx = cap;
+    p.missing = CHARSET.filter((c) => !glyphs[c]);
+    return p;
+  }
+
   /** Combine the glyphs of all pages into a profile (without image encoding). */
   function buildProfile(glyphLists, name) {
     const glyphs = {};
     for (const list of glyphLists) for (const g of list) (glyphs[g.char] = glyphs[g.char] || []).push(g);
-    const all = Object.values(glyphs).flat();
-    let offset = median(all.filter((g) => BASELINE_CHARS.has(g.char)).map((g) => g.inkBottom - g.templateBaseline)) || 0;
-    offset = Math.max(-3 * PPM, Math.min(3 * PPM, offset));
-    for (const g of all) {
-      const guide = g.templateBaseline + offset;
-      g.baseline = BASELINE_CHARS.has(g.char) && Math.abs(g.inkBottom - guide) < 3.5 * PPM ? g.inkBottom : guide;
-    }
-    const height = (chars) => median(all.filter((g) => chars.includes(g.char)).map((g) => g.baseline - g.inkTop));
-    let xh = height(XHEIGHT_CHARS), cap = height(CAPHEIGHT_CHARS);
-    if (xh == null && cap == null) { xh = 5 * PPM; cap = 8 * PPM; } else if (xh == null) xh = cap * 0.62; else if (cap == null) cap = xh / 0.62;
     const ordered = {};
-    for (const ch of CHARSET) if (glyphs[ch]) ordered[ch] = glyphs[ch].map((g, i) => ({ ...g, variant: i }));
-    return { name, pxPerMm: PPM, xHeightPx: xh, capHeightPx: cap, glyphs: ordered, missing: CHARSET.filter((c) => !glyphs[c]) };
+    for (const ch of CHARSET) if (glyphs[ch]) ordered[ch] = glyphs[ch].map((g) => ({ ...g }));
+    return normalizeProfile({ name, pxPerMm: PPM, glyphs: ordered });
   }
 
   // ---------------------------------------------------------------- text
@@ -554,18 +768,22 @@
   }
 
   // ---------------------------------------------------------------- layout
-  const BASE_X_HEIGHT_MM = 2.9, CAP_RATIO = 0.62, KERN_STEP = 0.08;
+  const BASE_X_HEIGHT_MM = 2.9, MIN_X_HEIGHT_MM = 2.5, MAX_X_HEIGHT_MM = 3.5, CAP_RATIO = 0.64, KERN_STEP = 0.08;
 
   class Layout {
     /** profile: {xHeightPx, capHeightPx, glyphs: {char: [{width,height,baseline,inkLeft,inkRight,profileL,profileR,...}]}} */
     constructor(profile, opts) {
       this.p = profile;
-      this.opts = Object.assign({ paper: "liniert", size: 1, jitter: 1, seed: 1 }, opts || {});
+      this.opts = Object.assign({ paper: "liniert", size: 1, jitter: 1, seed: 1, letterSpacing: 1, wordSpacing: 1 }, opts || {});
       this.paper = paperSpec(this.opts.paper, this.opts.lineSpacing);
       this.r = rng(this.opts.seed);
       this.j = Math.max(0, this.opts.jitter);
       const sp = this.paper.spacing;
-      let k = Math.min(BASE_X_HEIGHT_MM / profile.xHeightPx, (CAP_RATIO * sp) / profile.capHeightPx);
+      // write at the person's own size (as measured on the template), within
+      // what looks right on school paper
+      const natural = profile.xHeightPx / (profile.pxPerMm || PPM);
+      const xhMm = Math.min(MAX_X_HEIGHT_MM, Math.max(MIN_X_HEIGHT_MM, natural || BASE_X_HEIGHT_MM));
+      let k = Math.min(xhMm / profile.xHeightPx, (CAP_RATIO * sp) / profile.capHeightPx);
       this.k = Math.min(k * this.opts.size, (0.45 * sp) / profile.xHeightPx);
       this.xh = profile.xHeightPx * this.k;
       this.missing = {};
@@ -598,12 +816,12 @@
     }
 
     nextX(prev, g, k, xAfter) {
-      const gap = this.xh * Math.max(0.08, 0.2 + this.n(0.04));
+      const gap = this.xh * Math.max(0.05, 0.15 * this.opts.letterSpacing + this.n(0.035));
       const ys = [];
       for (let y = -4 * this.xh; y < 2 * this.xh; y += KERN_STEP) ys.push(y);
       const ra = this.sample(prev.g, prev.k, ys, 1).map((v) => (isNaN(v) ? -Infinity : prev.x + v));
       const lb = this.sample(g, k, ys, 0).map((v) => (isNaN(v) ? Infinity : v));
-      const reach = Math.round((0.3 * this.xh) / KERN_STEP);
+      const reach = Math.round((0.18 * this.xh) / KERN_STEP);
       let need = -Infinity;
       for (let i = 0; i < ys.length; i++) {
         if (lb[i] === Infinity) continue;
@@ -612,6 +830,8 @@
         if (m > -Infinity && m - lb[i] > need) need = m - lb[i];
       }
       if (need === -Infinity) return xAfter + gap;
+      // letters may tuck into each other like real handwriting; punctuation keeps its distance
+      if (!/[\p{L}\p{N}]/u.test(prev.g.char || "") || !/[\p{L}\p{N}]/u.test(g.char || "")) return Math.max(need + gap, xAfter + gap);
       const minW = Math.min((prev.g.inkRight - prev.g.inkLeft) * prev.k, (g.inkRight - g.inkLeft) * k);
       return Math.max(need + gap, xAfter - 0.4 * minW);
     }
@@ -625,7 +845,7 @@
         if (sub !== ch) this.missing[ch] = (this.missing[ch] || 0) + 1;
         for (const c of Array.from(sub)) {
           const g = this.pick(c);
-          const k = this.k * (1 + Math.max(-0.08, Math.min(0.08, this.n(0.03))));
+          const k = this.k * (g.scale || 1) * (1 + Math.max(-0.08, Math.min(0.08, this.n(0.03))));
           if (glyphs.length) x = this.nextX(glyphs[glyphs.length - 1], g, k, x);
           glyphs.push({ g, x, k, dy: this.n(0.07), angle: this.n(1.2), opacity: 1 - Math.abs(this.n(0.05)) });
           x += (g.inkRight - g.inkLeft) * k;
@@ -634,7 +854,7 @@
       return { glyphs, width: x };
     }
 
-    space() { return this.xh * (0.95 + this.n(0.12)); }
+    space() { return this.xh * (0.95 * this.opts.wordSpacing + this.n(0.12)); }
 
     splitLong(word, avail) {
       const parts = [];
@@ -710,7 +930,7 @@
   const api = {
     PAGE_W, PAGE_H, PPM, CHARSET, slots, markerCornersMm, UserError,
     image, shrink, components, homography, apply, matInv,
-    findMarkers, detectPage, rectify, flatten, extractPage, buildProfile,
+    findMarkers, detectPage, rectify, flatten, extractPage, buildProfile, normalizeProfile,
     normalizeText, fallbackChain, rng, paperSpec, Layout, glyphProfiles,
   };
   if (typeof module !== "undefined" && module.exports) module.exports = api;

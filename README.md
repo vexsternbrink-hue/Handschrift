@@ -19,6 +19,10 @@ iPhone oder fremde Rechner: <https://claude.ai/artifact/FtHXHoX3xxmtMXSQkGWDHS>
 * **Handschrift lernen:** Vorlage als PDF speichern und drucken (AirPrint), ausfüllen, mit dem
   iPad fotografieren, Foto hochladen – die Zeichen werden direkt auf dem Gerät erkannt.
 * **Schreiben:** Text eintippen, Papier/Tinte/Größe wählen, Vorschau ansehen, „PDF speichern“.
+* **KI-Prüfung (Claude):** Nach dem Foto schaut Claude sich jedes ausgeschnittene Zeichen an und sortiert
+  misslungene Varianten aus (abgeschnitten, falsches Zeichen, Rahmenreste). Vor dem PDF-Speichern prüft
+  Claude das fertige Blatt und stellt Buchstaben-/Wortabstand und Größe nach – gespeichert pro Profil.
+  Ohne KI-Zugang funktioniert alles wie gewohnt, nur ohne diese Prüfung.
 * **Profile:** Jede Person legt ihr eigenes Profil an. Profile lassen sich als `.json`
   exportieren und wieder importieren (Sicherung, Weitergabe an andere Geräte).
 
@@ -261,11 +265,16 @@ Raster aus 88 Kästchen mit gepunkteter Grundlinie und x-Höhen-Linie. Dieselbe 
 4. Tinte vom Papier trennen; Reste von Rahmen und gepunkteten Hilfslinien werden verworfen.
 5. Jedes Zeichen als Graustufen-Alphabild speichern (Strichstärke und Stiftstruktur bleiben
    erhalten) – mit Grundlinie, Größe und Herkunft in `glyphs.json`.
-6. Grundlinien werden pro Zeichen aus der Tinte bestimmt (a, b, c … sitzen genau auf der Zeile,
-   g, j, p … hängen darunter) und die typische x-Höhe/Großbuchstabenhöhe gemessen.
+6. **Ordnung schaffen:** Niemand schreibt exakt auf die gedruckten Hilfslinien. Deshalb wird die Lage jedes
+   Zeichens aus seiner Form bestimmt: a, b, c … sitzen mit dem unteren Tintenrand auf der Zeile, g, p, q, y
+   hängen mit ihrem Bauch auf x-Höhe darunter, Satzzeichen (- , „ “ ( ) …) landen typografisch richtig.
+   Größen werden zu ~70 % an die eigene typische Größe angeglichen (Kleinbuchstaben, Großbuchstaben,
+   Oberlängen, Ziffern) – es bleibt die eigene Schrift, wirkt aber ordentlich. Doppelt hochgeladene Seiten
+   werden zusammengefasst, Ausreißer-Varianten verworfen. Das gilt auch für schon gespeicherte Profile.
 
 **Rendern (`render.py`):**
-* Schriftgröße so, dass x-Höhe ≈ 2,9 mm und Großbuchstaben genug Platz zur Zeile darüber lassen.
+* Schriftgröße = die eigene, auf der Vorlage gemessene Größe (x-Höhe 2,5–3,5 mm), Großbuchstaben lassen
+  genug Platz zur Zeile darüber.
 * **Optischer Buchstabenabstand:** statt Kästchen nebeneinanderzusetzen, rückt jeder Buchstabe
   so nah an den vorherigen, wie es seine tatsächliche Form erlaubt – wie beim echten Schreiben.
 * Natürliche Variation: zufällige Variante pro Buchstabe (bei mehreren Template-Seiten; nie zweimal

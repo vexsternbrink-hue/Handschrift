@@ -63,7 +63,7 @@ def test_bad_inputs_are_reported_not_fatal(workdir, tmp_path):
         train_user(p, [tmp_path / "leer.jpg", tmp_path / "kaputt.jpg"])
 
 
-def test_append_adds_variants(workdir):
+def test_append_adds_variants(workdir, tmp_path):
     from handschrift import users
     from handschrift.glyphs import GlyphSet
     from handschrift.simulate import make_demo_inputs
@@ -72,7 +72,28 @@ def test_append_adds_variants(workdir):
     make_demo_inputs(p.input_dir, "Caveat-Regular.ttf", pages=1, seed=21)
     train_user(p)
     before = sum(len(v) for v in GlyphSet.load(p.handwriting_dir).glyphs.values())
+
+    # the same photo again adds nothing (identical copies are merged) ...
     train_user(p, [p.input_dir / "foto_seite1.jpg"], append=True)
+    assert sum(len(v) for v in GlyphSet.load(p.handwriting_dir).glyphs.values()) == before
+
+    # ... a newly filled page adds real variants
+    make_demo_inputs(tmp_path / "neu", "Caveat-Regular.ttf", pages=2, seed=33)
+    train_user(p, [tmp_path / "neu" / "foto_seite2.jpg"], append=True)
     after = GlyphSet.load(p.handwriting_dir)
     assert sum(len(v) for v in after.glyphs.values()) == 2 * before
     assert len({r.file for r in after.variants("a")}) == 2
+
+
+def test_letters_sit_on_the_line_even_if_written_off_the_guide(trained, glyphset):
+    """Baselines come from the letter shapes, not from the printed guide line."""
+    xh = glyphset.x_height_px
+    for ch in "acemnorsuvwxzbdhklABDEHKMNR0123456789":
+        for r in glyphset.variants(ch):
+            assert abs(r.baseline - r.ink_bottom) < 1e-6, ch
+    for ch in "gpqy":
+        for r in glyphset.variants(ch):
+            assert abs((r.baseline - r.ink_top) * r.scale - xh) < 1e-6, ch
+    for recs in glyphset.glyphs.values():
+        for r in recs:
+            assert 0.72 <= r.scale <= 1.4
